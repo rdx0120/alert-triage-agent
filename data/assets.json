@@ -1,0 +1,18 @@
+{
+  "meta": {
+    "note": "Synthetic inventory for a fictional multi-site clinic. No real hostnames, IPs, owners or PHI.",
+    "updated": "2026-10-14"
+  },
+  "assets": [
+    {"host": "CLINIC-FRONT01", "role": "front-desk workstation", "site": "site-a", "os": "Windows 11", "owner": "front-desk team", "criticality": "medium", "exposure": "internal", "handles_sensitive_data": true},
+    {"host": "CLINIC-FRONT02", "role": "front-desk workstation", "site": "site-b", "os": "Windows 11", "owner": "front-desk team", "criticality": "medium", "exposure": "internal", "handles_sensitive_data": true},
+    {"host": "CLINIC-BILL01", "role": "billing workstation", "site": "site-a", "os": "Windows 11", "owner": "billing team", "criticality": "high", "exposure": "internal", "handles_sensitive_data": true},
+    {"host": "CLINIC-DOC03", "role": "provider laptop", "site": "site-b", "os": "Windows 11", "owner": "clinical staff", "criticality": "high", "exposure": "internal", "handles_sensitive_data": true},
+    {"host": "CLINIC-DC01", "role": "domain controller", "site": "site-a", "os": "Windows Server 2022", "owner": "IT", "criticality": "critical", "exposure": "internal", "handles_sensitive_data": false},
+    {"host": "CLINIC-FS01", "role": "file server", "site": "site-a", "os": "Windows Server 2022", "owner": "IT", "criticality": "critical", "exposure": "internal", "handles_sensitive_data": true},
+    {"host": "CLINIC-PORTAL01", "role": "patient portal web server", "site": "cloud", "os": "Ubuntu 24.04", "owner": "IT", "criticality": "critical", "exposure": "internet-facing", "handles_sensitive_data": true},
+    {"host": "CLINIC-VPN01", "role": "remote access gateway", "site": "site-a", "os": "appliance", "owner": "IT", "criticality": "high", "exposure": "internet-facing", "handles_sensitive_data": false},
+    {"host": "CLINIC-IT01", "role": "IT admin workstation", "site": "site-a", "os": "Windows 11", "owner": "IT", "criticality": "high", "exposure": "internal", "handles_sensitive_data": false},
+    {"host": "CLINIC-KIOSK01", "role": "waiting-room check-in kiosk", "site": "site-b", "os": "Windows 11 IoT", "owner": "front-desk team", "criticality": "low", "exposure": "internal", "handles_sensitive_data": false}
+  ]
+}

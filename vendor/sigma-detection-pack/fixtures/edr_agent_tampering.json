@@ -1,0 +1,8 @@
+{
+  "true_positive": [
+    {"Image": "C:\\Windows\\System32\\taskkill.exe", "CommandLine": "taskkill /F /IM EPProtectedService.exe", "User": "clinic-front01\\jsmith", "ComputerName": "CLINIC-FRONT01"}
+  ],
+  "false_positive": [
+    {"Image": "C:\\Windows\\System32\\sc.exe", "CommandLine": "sc.exe stop wuauserv", "User": "clinic-front01\\it_admin", "ComputerName": "CLINIC-FRONT01"}
+  ]
+}

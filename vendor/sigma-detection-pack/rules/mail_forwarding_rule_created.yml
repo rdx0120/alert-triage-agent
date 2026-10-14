@@ -1,0 +1,32 @@
+title: Email Forwarding Rule Created on User Mailbox
+id: 6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e
+status: stable
+description: |
+    Detects creation of a mail auto-forwarding rule on a user's mailbox.
+    This is a classic Business Email Compromise (BEC) persistence
+    technique: an attacker who briefly compromises a mailbox sets up
+    silent forwarding to continue reading mail after the password is
+    reset or MFA is re-enrolled.
+references:
+    - https://attack.mitre.org/techniques/T1114/003/
+author: RoHaN
+date: 2026-07-01
+modified: 2026-07-01
+tags:
+    - attack.collection
+    - attack.t1114.003
+logsource:
+    product: google_workspace
+    service: gmail
+detection:
+    selection:
+        event.name: 'forwarding_rule_created'
+    condition: selection
+falsepositives:
+    - Legitimate user setting up forwarding to a personal or secondary work address
+    - IT-configured shared-mailbox forwarding during onboarding
+level: high
+fields:
+    - actor.email
+    - forwarding.destination_email
+    - event.time

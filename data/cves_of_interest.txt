@@ -1,0 +1,2 @@
+# CVEs used by eval alerts that may not be in KEV. One per line.
+# EPSS is fetched for these in addition to every KEV CVE.

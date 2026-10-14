@@ -1,0 +1,8 @@
+{
+  "true_positive": [
+    {"event.name": "ASSIGN_ROLE", "actor.email": "compromised-admin@example-clinic.test", "target.email": "new-shadow-admin@example-clinic.test", "role.name": "_SEED_ADMIN_ROLE Super Admin", "event.time": "2026-07-01T02:10:00Z"}
+  ],
+  "false_positive": [
+    {"event.name": "ASSIGN_ROLE", "actor.email": "compromised-admin@example-clinic.test", "target.email": "new-shadow-admin@example-clinic.test", "role.name": "Help Desk Admin", "event.time": "2026-07-01T02:10:00Z"}
+  ]
+}

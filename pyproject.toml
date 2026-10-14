@@ -1,0 +1,29 @@
+[project]
+name = "alert-triage-agent"
+version = "0.1.0"
+description = "Read-only LLM triage agent for security alerts, with code-enforced guardrails"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "numpy>=1.26",
+    "faiss-cpu>=1.8",
+]
+
+[project.optional-dependencies]
+# Real embeddings. Kept optional so CI and tests run offline with the hashing embedder.
+embeddings = ["sentence-transformers>=3.0"]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["triage*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: needs the sentence-transformers model download (run with -m slow)",
+]
+addopts = "-m 'not slow'"

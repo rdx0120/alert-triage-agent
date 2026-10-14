@@ -1,0 +1,8 @@
+{
+  "true_positive": [
+    {"event.name": "forwarding_rule_created", "actor.email": "billing01@example-clinic.test", "forwarding.destination_email": "unknown.recipient@external-domain.test", "event.time": "2026-07-01T16:40:00Z"}
+  ],
+  "false_positive": [
+    {"event.name": "other_mailbox_setting_changed", "actor.email": "billing01@example-clinic.test", "setting.name": "vacation_responder", "event.time": "2026-07-01T16:41:00Z"}
+  ]
+}

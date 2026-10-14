@@ -1,0 +1,8 @@
+{
+  "true_positive": [
+    {"event.name": "authorize", "actor.email": "nurse01@example-clinic.test", "client_id": "unknown-3rd-party-app-98765", "app.name": "QuickMail Assistant", "scope.value": "https://mail.google.com/", "event.time": "2026-07-01T14:22:00Z"}
+  ],
+  "false_positive": [
+    {"event.name": "authorize", "actor.email": "svc-helpdesk@example-clinic.test", "client_id": "google-admin-console-native", "app.name": "Google Admin Console", "event.time": "2026-07-14T10:28:00Z"}
+  ]
+}
