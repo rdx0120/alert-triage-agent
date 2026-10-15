@@ -54,13 +54,13 @@ python scripts/build_kev_epss.py data/kev_epss_snapshot.json
 - **Snapshots, not live APIs.** Lookups read local files built by `scripts/`,
   so eval runs are reproducible and triage never makes network calls.
 - **Vendored Sigma content.** See `vendor/sigma-detection-pack/SOURCE.md`.
-  `tests/test_vendor_rules.py` checks rule tags against current ATT&CK and
-  currently flags one stale tag (T1562.001, revoked and replaced by T1685).
+  `tests/test_vendor_rules.py` checks rule tags and runbook ATT&CK headers
+  against current ATT&CK, since runbook text is returned to the model.
 
 ## Roadmap
 
 - Weekend 1 (rest): sample alerts, deterministic pre-enrichment, agent loop
-  (Claude backend + offline heuristic backend), JSONL audit log.
+  (Ollama backend + offline heuristic backend; Claude API later), JSONL audit log.
 - Weekend 2: spotlighting, severity policy floors, evidence-ID and ATT&CK
   output validation, fail-closed statuses, FastAPI, Docker, CI with the
   secure-pipeline gate.

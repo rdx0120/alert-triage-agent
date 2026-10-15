@@ -9,13 +9,13 @@ description: |
     ransomware; this event should always be treated as high priority
     even if it later proves to be legitimate maintenance.
 references:
-    - https://attack.mitre.org/techniques/T1562/001/
+    - https://attack.mitre.org/techniques/T1685/
 author: RoHaN
 date: 2026-07-01
-modified: 2026-07-01
+modified: 2026-10-14
 tags:
-    - attack.defense-evasion
-    - attack.t1562.001
+    - attack.defense-impairment
+    - attack.t1685
 logsource:
     category: process_creation
     product: windows

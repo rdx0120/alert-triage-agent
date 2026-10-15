@@ -2,7 +2,7 @@
 
 **Rule:** `rules/endpoint/edr_agent_tampering.yml`
 **Severity:** Critical
-**ATT&CK:** T1562.001 — Impair Defenses: Disable or Modify Tools
+**ATT&CK:** T1685 — Disable or Modify Tools
 
 ## What this means
 
