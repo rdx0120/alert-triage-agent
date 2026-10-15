@@ -29,15 +29,22 @@ answer is never reported as success.
 | `runbook_search` | `triage/tools/runbooks.py` | Section-level chunks of the 7 Sigma runbooks (43 chunks), FAISS `IndexFlatIP`, minimum-score cutoff → `not_found` instead of a weak match. |
 | Data builders | `scripts/` | Rebuild the ATT&CK and KEV/EPSS snapshots from the public sources. |
 
-## Setup (Windows Git Bash or Linux)
+## Run it
+
+Needs Python 3.11+ on Linux, macOS or Windows. Nothing here depends on a
+particular editor or AI tool.
 
 ```bash
+git clone https://github.com/rdx0120/alert-triage-agent.git
+cd alert-triage-agent
 python -m venv .venv
-source .venv/Scripts/activate      # Linux/macOS: source .venv/bin/activate
-pip install -e ".[dev,embeddings]"
-pytest                              # fast suite, offline (hashing embedder)
-pytest -m slow                      # real MiniLM retrieval; downloads ~90 MB once
+source .venv/bin/activate            # Windows Git Bash: source .venv/Scripts/activate
+pip install -e ".[dev]"              # add ,embeddings for real retrieval
+pytest                               # fast suite, offline (hashing embedder)
+pytest -m slow                       # real MiniLM retrieval; downloads ~90 MB once
 ```
+
+Settings come from environment variables; `.env.example` lists them.
 
 Fill in EPSS scores (the committed snapshot has KEV only):
 
@@ -45,7 +52,20 @@ Fill in EPSS scores (the committed snapshot has KEV only):
 python scripts/build_kev_epss.py data/kev_epss_snapshot.json
 ```
 
+## Where it runs
+
+| Task | Environment |
+|---|---|
+| Development, unit tests, retrieval tests, Docker builds | Cloud development VM (any Linux box works) |
+| Ollama integration, final eval, latency numbers | Ubuntu VM in a home lab, next to the Ollama server |
+| CI | GitHub Actions |
+
+The model server is never exposed to the internet: eval runs from a clone of
+this repo on the same private network. See `docs/DECISIONS.md` (D9).
+
 ## Notes and decisions
+
+Full reasoning for each choice is in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 - **Two embedders.** `minilm` (sentence-transformers all-MiniLM-L6-v2) is the
   real one. `hashing` is a word-overlap stand-in so tests and CI run offline
@@ -59,9 +79,12 @@ python scripts/build_kev_epss.py data/kev_epss_snapshot.json
 
 ## Roadmap
 
-- Weekend 1 (rest): sample alerts, deterministic pre-enrichment, agent loop
-  (Ollama backend + offline heuristic backend; Claude API later), JSONL audit log.
-- Weekend 2: spotlighting, severity policy floors, evidence-ID and ATT&CK
-  output validation, fail-closed statuses, FastAPI, Docker, CI with the
+- **Weekend 1 (rest):** sample alerts, deterministic pre-enrichment, backend
+  interface (offline heuristic backend + Ollama backend; Claude API later),
+  agent loop with step and tool-call caps, JSONL audit log.
+- **Weekend 2:** spotlighting of alert fields, injection tripwire, severity
+  policy floors, evidence-ID and ATT&CK output validation, fail-closed
+  statuses, FastAPI `POST /triage`, Docker, GitHub Actions CI with the
   secure-pipeline gate.
-- Weekend 3: labeled eval set and scoring, threat model, results here.
+- **Weekend 3:** labeled eval set and scoring script, eval run against Ollama
+  on the lab VM, threat model, results here.
