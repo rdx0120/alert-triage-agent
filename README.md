@@ -44,6 +44,14 @@ pytest                               # fast suite, offline (hashing embedder)
 pytest -m slow                       # real MiniLM retrieval; downloads ~90 MB once
 ```
 
+On Linux without an NVIDIA GPU, install the CPU-only PyTorch build before the
+`embeddings` extra; otherwise pip pulls several GB of CUDA libraries you won't use:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -e ".[dev,embeddings]"
+```
+
 Settings come from environment variables; `.env.example` lists them.
 
 Fill in EPSS scores (the committed snapshot has KEV only):

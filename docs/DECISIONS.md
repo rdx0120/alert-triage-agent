@@ -163,3 +163,21 @@ without the tools used to build it.
 
 **Interview answer.** "The model server never leaves my lab network; the eval runs
 next to it from a clean clone."
+
+---
+
+## D10. Python versions: support 3.11+, don't pin
+
+**Decision.** `pyproject.toml` keeps `requires-python = ">=3.11"`. Development
+runs on Python 3.13 (cloud VM) and the evaluation VM runs 3.12 (Ubuntu 24.04's
+default). From weekend 2, CI runs the test suite on both 3.12 and 3.13.
+
+**Why.** Pinning one version would force an extra Python install on one of the
+two machines. Testing both proves the code doesn't depend on either.
+
+**Trade-off.** Two CI jobs instead of one. The Docker image will still pin a
+single version; that choice is made in weekend 2.
+
+**Interview answer.** "I support the Python versions my environments actually
+run and test both in CI, rather than pinning to whichever one I happened to
+develop on."

@@ -1,8 +1,11 @@
 """Each tool through run_tool(): the happy path, the empty answer, bad input, and failure."""
 
+import json
+
+import pytest
 from pydantic import BaseModel
 
-from triage.tools import run_tool
+from triage.tools import kev_epss, run_tool
 from triage.tools.registry import Tool, evidence_id
 
 
@@ -78,12 +81,6 @@ def test_kev_listed_cve(tools):
     assert r.status == "ok" and r.data["in_kev"] is True and r.data["kev_product"] == "Log4j2"
 
 
-def test_kev_missing_epss_is_flagged_unknown(tools):
-    r = run_tool(tools, "kev_epss_lookup", {"cve": "CVE-2021-44228"})
-    if r.data["epss"] is None:  # snapshot built with --no-epss
-        assert "epss" in r.data["unknown_fields"]
-
-
 def test_kev_unlisted_cve_is_not_in_kev(tools):
     r = run_tool(tools, "kev_epss_lookup", {"cve": "CVE-1999-0001"})
     assert r.status == "ok" and r.data["in_kev"] is False
@@ -91,6 +88,65 @@ def test_kev_unlisted_cve_is_not_in_kev(tools):
 
 def test_kev_malformed_cve_is_invalid(tools):
     assert run_tool(tools, "kev_epss_lookup", {"cve": "log4shell"}).status == "invalid_input"
+
+
+# Synthetic snapshot so the EPSS cases don't depend on what the committed snapshot holds.
+_KEV_FIELDS = {
+    "kev_date_added": "2099-01-01",
+    "kev_vendor": "Example",
+    "kev_product": "Widget",
+    "kev_name": "Example Widget Test Vulnerability",
+    "kev_known_ransomware": False,
+}
+
+
+def _kev_tools(path):
+    return {"kev_epss_lookup": Tool("kev_epss_lookup", kev_epss.DESCRIPTION, kev_epss.KevEpssArgs,
+                                    kev_epss.make_kev_epss_lookup(path))}
+
+
+@pytest.fixture
+def kev_fixture_tools(tmp_path):
+    snap = {
+        "meta": {"kev_catalog_version": "2099.01.01", "epss_date": "2099-01-01"},
+        "cves": {
+            "CVE-2099-0001": {"in_kev": True, "epss": 0.5, "epss_percentile": 0.9, **_KEV_FIELDS},
+            "CVE-2099-0002": {"in_kev": True, "epss": None, "epss_percentile": None, **_KEV_FIELDS},
+        },
+    }
+    path = tmp_path / "kev_epss_snapshot.json"
+    path.write_text(json.dumps(snap), encoding="utf-8")
+    return _kev_tools(path)
+
+
+def test_kev_fixture_full_record_has_no_unknowns(kev_fixture_tools):
+    """A complete record must not be reported as having missing data."""
+    r = run_tool(kev_fixture_tools, "kev_epss_lookup", {"cve": "CVE-2099-0001"})
+    assert r.status == "ok" and r.data["in_kev"] is True
+    assert r.data["epss"] == 0.5 and r.data["unknown_fields"] == []
+
+
+def test_kev_fixture_missing_epss_is_flagged_unknown(kev_fixture_tools):
+    """A KEV entry without EPSS must report EPSS as unknown, not as a low score."""
+    r = run_tool(kev_fixture_tools, "kev_epss_lookup", {"cve": "CVE-2099-0002"})
+    assert r.status == "ok" and r.data["in_kev"] is True and r.data["epss"] is None
+    assert r.data["unknown_fields"] == ["epss", "epss_percentile"]
+
+
+def test_kev_fixture_unlisted_cve_has_unknown_epss(kev_fixture_tools):
+    """A CVE absent from the snapshot is "not in KEV", but its EPSS stays unknown."""
+    r = run_tool(kev_fixture_tools, "kev_epss_lookup", {"cve": "CVE-2099-9999"})
+    assert r.status == "ok" and r.data["in_kev"] is False and r.data["epss"] is None
+    assert r.data["unknown_fields"] == ["epss", "epss_percentile"]
+
+
+def test_kev_empty_snapshot_fails_closed(tmp_path):
+    """An empty snapshot must error, not answer "not in KEV" for every CVE."""
+    path = tmp_path / "empty_snapshot.json"
+    path.write_text(json.dumps({"meta": {"kev_catalog_version": "2099.01.01", "epss_date": None},
+                                "cves": {}}), encoding="utf-8")
+    r = run_tool(_kev_tools(path), "kev_epss_lookup", {"cve": "CVE-2099-0001"})
+    assert r.status == "error" and r.data is None
 
 
 # --- asset_context -----------------------------------------------------
