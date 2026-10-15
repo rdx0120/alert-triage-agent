@@ -25,6 +25,11 @@ never describe it as deployed at an employer.
   review and merge. Never push to `main` directly.
 - **One milestone step per PR.** Run `pytest` before opening the PR and paste the
   result into the PR description.
+- **Commit and PR text:** plain messages only. Never add `Co-Authored-By`,
+  `Claude-Session`, "Generated with Claude Code" or any other attribution line to
+  commits or PR descriptions (`.claude/settings.json` sets the same). The owner
+  squash-merges each PR and is the author of record on `main`; branch commits are
+  temporary.
 - **Keep the owner in the loop.** Before building anything with a real design choice,
   explain the options and trade-offs in plain language and wait for a decision. After
   building, add or update an entry in `docs/DECISIONS.md` (what, why, trade-off, and a
