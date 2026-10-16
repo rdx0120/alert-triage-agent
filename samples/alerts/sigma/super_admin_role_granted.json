@@ -1,0 +1,20 @@
+{
+  "alert_id": "sigma-super-admin-role-granted",
+  "rule": {
+    "id": "9c0d1e2f-3a4b-4c5d-8e9f-0a1b2c3d4e5f",
+    "title": "Super-Admin Role Granted in Google Workspace",
+    "level": "critical",
+    "tags": [
+      "attack.persistence",
+      "attack.privilege-escalation",
+      "attack.t1098"
+    ]
+  },
+  "event": {
+    "event.name": "ASSIGN_ROLE",
+    "actor.email": "compromised-admin@example-clinic.test",
+    "target.email": "new-shadow-admin@example-clinic.test",
+    "role.name": "_SEED_ADMIN_ROLE Super Admin",
+    "event.time": "2026-07-01T02:10:00Z"
+  }
+}

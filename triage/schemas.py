@@ -39,6 +39,7 @@ class Strict(BaseModel):
 TECHNIQUE_ID_PATTERN = r"^T\d{4}(\.\d{3})?$"
 CVE_PATTERN = r"^CVE-\d{4}-\d{4,7}$"
 HOST_PATTERN = r"^[A-Za-z0-9._-]{1,64}$"
+ALERT_ID_PATTERN = r"^[A-Za-z0-9._:-]{1,128}$"
 
 # Raw event fields are attacker-influenced strings. Cap their size so one
 # huge command line can't blow the token budget.
@@ -48,7 +49,7 @@ MAX_FIELD_CHARS = 4096
 class Alert(Strict):
     """Canonical alert. Wazuh / Sigma-style inputs are normalized into this."""
 
-    alert_id: str = Field(min_length=1, max_length=128)
+    alert_id: str = Field(pattern=ALERT_ID_PATTERN)
     source: Literal["sigma", "wazuh", "cloudtrail", "synthetic"]
     rule_id: str = Field(min_length=1, max_length=128)
     rule_title: str = Field(max_length=256)
@@ -60,6 +61,9 @@ class Alert(Strict):
     cves: list[str] = Field(default_factory=list, max_length=20)
     # The raw event. Values only; everything in here is treated as untrusted data.
     event: dict[str, str | int | float | bool | None] = Field(default_factory=dict, max_length=50)
+    # Problems found while normalizing; fixed-template messages that name a
+    # known field, never its value.
+    ingest_warnings: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def _cap_event_values(self) -> "Alert":

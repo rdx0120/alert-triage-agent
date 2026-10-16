@@ -1,0 +1,18 @@
+{
+  "alert_id": "sigma-edr-agent-tampering",
+  "rule": {
+    "id": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+    "title": "EDR Agent Stopped, Uninstalled, or Suppressed",
+    "level": "critical",
+    "tags": [
+      "attack.defense-impairment",
+      "attack.t1685"
+    ]
+  },
+  "event": {
+    "Image": "C:\\Windows\\System32\\taskkill.exe",
+    "CommandLine": "taskkill /F /IM EPProtectedService.exe",
+    "User": "clinic-front01\\jsmith",
+    "ComputerName": "CLINIC-FRONT01"
+  }
+}
