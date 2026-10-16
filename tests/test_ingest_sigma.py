@@ -321,3 +321,12 @@ def test_more_than_max_tags_keeps_first_twenty():
     assert MAX_TAGS == 20
     assert alert.rule_tags == tags[:20]
     assert "rule.tags: 5 tags beyond the first 20 dropped" in alert.ingest_warnings
+
+
+def test_out_of_range_float_in_event_kept_as_text():
+    """A float literal that overflows to inf in a Sigma event cannot break later JSON output."""
+    raw = base()
+    raw["event"]["n"] = "__NUMBER__"
+    alert = load_alert(json.dumps(raw).replace('"__NUMBER__"', "1e999"), fmt="sigma")
+    assert alert.event["n"] == "1e999"
+    json.dumps(alert.model_dump(), allow_nan=False)

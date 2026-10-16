@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from typing import Any, Callable, Literal
 
@@ -99,7 +100,12 @@ def load_alert(text: str | bytes, fmt: Literal["wazuh", "sigma"]) -> Alert:
     if len(data) > MAX_RAW_ALERT_BYTES:
         raise IngestError(f"input: larger than {MAX_RAW_ALERT_BYTES} bytes")
     try:
-        raw = json.loads(data.decode("utf-8"), parse_constant=_reject_constant)
+        raw = json.loads(
+            data.decode("utf-8"),
+            parse_constant=_reject_constant,
+            parse_float=_parse_float,
+            parse_int=_parse_int,
+        )
     except (ValueError, RecursionError):
         # ValueError covers bad UTF-8, bad JSON and NaN/Infinity; RecursionError
         # covers arrays nested tens of thousands deep, which fit inside the size cap.
@@ -113,6 +119,26 @@ def _reject_constant(name: str) -> Any:
     # json.loads accepts NaN, Infinity and -Infinity, which are not valid JSON;
     # letting them through would make every later JSON output invalid.
     raise ValueError("non-standard JSON constant")
+
+
+# Two kinds of valid JSON number do not fit a Python number. A float literal
+# such as 1e999 parses to inf, which would make every later JSON output
+# invalid, like NaN above. An integer longer than Python's int conversion
+# limit (4,300 digits) makes int() raise ValueError. Unlike NaN, both are
+# valid JSON, and event data is attacker-influenced: rejecting them would let
+# one crafted field keep the whole alert from triage. So the number is kept as
+# the exact text received. Trusted fields still fail closed: a rule.level that
+# arrives as text is not an int and is rejected by wazuh_level_to_severity.
+def _parse_float(text: str) -> float | str:
+    value = float(text)
+    return value if math.isfinite(value) else text
+
+
+def _parse_int(text: str) -> int | str:
+    try:
+        return int(text)
+    except ValueError:
+        return text
 
 
 # --- Wazuh 4.x -----------------------------------------------------------

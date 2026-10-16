@@ -449,6 +449,49 @@ def test_non_standard_json_constants_rejected(constant, template, fmt):
     assert str(exc.value) == "input: not valid JSON"
 
 
+# --- Out-of-range JSON numbers -----------------------------------------------
+
+
+def load_with_number(literal: str, where: str = "data"):
+    """Load base() with a raw JSON number literal that json.dumps cannot produce."""
+    raw = base()
+    if where == "data":
+        raw["data"]["n"] = "__NUMBER__"
+    else:
+        raw["rule"]["level"] = "__NUMBER__"
+    return load_alert(json.dumps(raw).replace('"__NUMBER__"', literal), fmt="wazuh")
+
+
+@pytest.mark.parametrize("literal", ["1e999", "-1e999"])
+def test_out_of_range_float_kept_as_text(literal):
+    """A float literal that overflows to inf cannot break later JSON output."""
+    alert = load_with_number(literal)
+    assert alert.event["data.n"] == literal
+    json.dumps(alert.model_dump(), allow_nan=False)
+
+
+def test_integer_over_conversion_limit_kept_as_text():
+    """An integer too long for int() cannot get the alert rejected as invalid JSON."""
+    digits = "7" * 5000
+    alert = load_with_number(digits)
+    value = alert.event["data.n"]
+    assert value.startswith("7" * 4096) and value.endswith("...[truncated]")
+
+
+@pytest.mark.parametrize("literal, expected", [("42", 42), ("-42", -42), ("3.5", 3.5), ("1e308", 1e308)])
+def test_ordinary_numbers_unchanged(literal, expected):
+    """Number handling for out-of-range values does not change ordinary numbers."""
+    value = load_with_number(literal).event["data.n"]
+    assert type(value) is type(expected) and value == expected
+
+
+def test_out_of_range_rule_level_rejected():
+    """A rule.level kept as text is still rejected, without echoing the input."""
+    with pytest.raises(IngestError) as exc:
+        load_with_number("1e999", where="rule.level")
+    assert "1e999" not in str(exc.value)
+
+
 # --- Raw size cap ------------------------------------------------------------
 
 
