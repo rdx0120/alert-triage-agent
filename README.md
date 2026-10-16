@@ -69,7 +69,7 @@ service.
 | `requires_human_approval` fixed to `true` by the schema | Autonomous containment | Implemented |
 | Fail closed: an `ok` result must carry data; errors, empty and unknown results are distinct statuses | Silent failures read as "nothing found" | Implemented |
 | Untrusted input not echoed in validation errors | Re-injection through error messages | Implemented |
-| Raw alert caps: 64 KiB per alert (checked before parsing), nesting depth 5, 50 event fields | Oversized or deeply nested input | Implemented |
+| Raw alert caps: 256 KiB per alert (checked before parsing), nesting depth 5, 50 event fields, 4,096 characters per field | Oversized or deeply nested input | Implemented |
 | Techniques and CVEs read only from rule metadata and scanner fields, never from event text | Attacker text steering severity or lookups | Implemented |
 | Hostname and alert-ID allow-list patterns; ingestion problems reported as `ingest_warnings` | Injected identifiers; silently dropped fields | Implemented |
 | Revoked ATT&CK IDs resolved to their replacement | Stale technique mappings | Implemented |
