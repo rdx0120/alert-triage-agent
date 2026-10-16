@@ -9,6 +9,9 @@ from triage.config import REPO_ROOT
 from triage.ingest import (
     MAX_EVENT_KEYS,
     MAX_RAW_ALERT_BYTES,
+    MAX_TAGS,
+    MAX_TIMESTAMP_CHARS,
+    MAX_TITLE_CHARS,
     MAX_WARNINGS,
     IngestError,
     _Warnings,
@@ -311,7 +314,6 @@ MARKER = "ZZ_MARKER_7f3a"
         lambda r: r.__setitem__("id", MARKER + " ; spaces not allowed"),
         lambda r: r.__setitem__("id", [MARKER]),
         lambda r: r["rule"].__setitem__("id", MARKER * 20),  # over 128 chars
-        lambda r: r["rule"].__setitem__("description", MARKER * 30),  # over 256 chars
     ],
 )
 def test_rejection_messages_never_contain_input(mutate):
@@ -324,6 +326,7 @@ def test_rejection_messages_never_contain_input(mutate):
 
 def test_warnings_never_contain_input_keys_or_values():
     raw = base()
+    raw["rule"]["description"] = MARKER * 30  # over 256 chars: truncated, not rejected
     raw["agent"]["name"] = MARKER + " bad host"
     raw["rule"]["mitre"]["id"] = [MARKER]
     raw["data"]["vulnerability"] = {"cve": MARKER}
@@ -353,3 +356,126 @@ def test_input_dict_not_modified():
     before = copy.deepcopy(raw)
     from_wazuh(raw)
     assert raw == before
+
+
+# --- Untrusted rule title ----------------------------------------------------
+
+
+def test_overlong_rule_description_truncated_not_rejected():
+    """Event data substituted into rule.description cannot keep the alert from triage."""
+    raw = base()
+    raw["rule"]["description"] = ((INJECTION + " " + MARKER + " ") * 3)[:300]
+    assert len(raw["rule"]["description"]) == 300
+    alert = load(raw)
+    assert len(alert.rule_title) == MAX_TITLE_CHARS == 256
+    assert alert.rule_title.endswith("...[truncated]")
+    assert alert.rule_title == raw["rule"]["description"][:242] + "...[truncated]"
+    assert "rule.description: longer than 256 characters; truncated" in alert.ingest_warnings
+    for w in alert.ingest_warnings:
+        assert MARKER not in w and "Ignore all previous" not in w
+
+
+def test_rule_description_of_exactly_max_length_kept():
+    """The truncation boundary does not alter a title that fits."""
+    raw = base()
+    raw["rule"]["description"] = "d" * MAX_TITLE_CHARS
+    alert = load(raw)
+    assert alert.rule_title == "d" * MAX_TITLE_CHARS
+    assert alert.ingest_warnings == []
+
+
+@pytest.mark.parametrize("value", ["", None, 42])
+def test_empty_or_invalid_rule_description_still_rejected(value):
+    """Alerts without a usable rule title are refused, not triaged blind."""
+    raw = base()
+    raw["rule"]["description"] = value
+    with pytest.raises(IngestError, match=r"rule\.description"):
+        load(raw)
+
+
+# --- Timestamp cap -----------------------------------------------------------
+
+
+def test_overlong_timestamp_left_empty():
+    """An oversized timestamp cannot get the alert rejected or reach later stages."""
+    raw = base()
+    raw["timestamp"] = MARKER + "9" * (100 - len(MARKER))
+    assert len(raw["timestamp"]) == 100
+    alert = load(raw)
+    assert alert.timestamp is None
+    assert f"timestamp: longer than {MAX_TIMESTAMP_CHARS} characters; timestamp left empty" in alert.ingest_warnings
+    assert not any(MARKER in w for w in alert.ingest_warnings)
+
+
+def test_normal_timestamp_unchanged():
+    """The timestamp cap does not alter real Wazuh timestamps."""
+    alert = load(base())
+    assert alert.timestamp == "2026-07-01T09:00:00.000+0000"
+    assert alert.ingest_warnings == []
+
+
+# --- Tag cap -----------------------------------------------------------------
+
+
+def test_more_than_max_mitre_ids_keeps_first_twenty():
+    """A rule with many techniques is capped, not rejected."""
+    raw = base()
+    ids = [f"T{1000 + i}" for i in range(25)]
+    raw["rule"]["mitre"]["id"] = ids
+    alert = load(raw)
+    assert MAX_TAGS == 20
+    assert alert.rule_tags == ["attack." + t.lower() for t in ids[:20]]
+    assert "rule.mitre.id: 5 tags beyond the first 20 dropped" in alert.ingest_warnings
+
+
+# --- Non-standard JSON constants ---------------------------------------------
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        '{{"id": "a", "x": {c}}}',
+        '{{"id": "a", "rule": {{"level": {c}}}}}',
+        '{{"id": "a", "data": {{"win": {{"eventdata": {{"n": [1, {c}]}}}}}}}}',
+    ],
+    ids=["top-level", "rule-level", "nested-list"],
+)
+@pytest.mark.parametrize("fmt", ["wazuh", "sigma"])
+def test_non_standard_json_constants_rejected(constant, template, fmt):
+    """NaN and Infinity would make every later JSON output invalid."""
+    with pytest.raises(IngestError) as exc:
+        load_alert(template.format(c=constant), fmt=fmt)
+    assert str(exc.value) == "input: not valid JSON"
+
+
+# --- Raw size cap ------------------------------------------------------------
+
+
+def test_maximum_windows_command_line_twice_accepted():
+    """A real alert with a maximum-length command line cannot be kept from triage by the size cap."""
+    cmd = ("ab\\" * 11000)[:32767]
+    assert len(cmd) == 32767
+    raw = base()
+    raw["data"]["win"]["eventdata"]["commandLine"] = cmd
+    # Windows eventchannel alerts carry the event again as JSON text in full_log.
+    raw["full_log"] = json.dumps({"win": {"eventdata": {"commandLine": cmd}}})
+    text = json.dumps(raw)
+    assert 64 * 1024 < len(text.encode("utf-8")) <= MAX_RAW_ALERT_BYTES  # over the previous cap
+    alert = load_alert(text, fmt="wazuh")
+    assert alert.event["data.win.eventdata.commandLine"] == cmd[:4096] + "...[truncated]"
+    assert alert.event["full_log"].endswith("...[truncated]")
+
+
+def test_valid_alert_one_byte_over_cap_rejected():
+    """The raw size cap still holds at its boundary."""
+    raw = base()
+    raw["data"]["pad"] = ""
+    pad = MAX_RAW_ALERT_BYTES - len(json.dumps(raw).encode("utf-8"))
+    raw["data"]["pad"] = "x" * pad
+    at_cap = json.dumps(raw)
+    assert len(at_cap.encode("utf-8")) == MAX_RAW_ALERT_BYTES
+    assert load_alert(at_cap, fmt="wazuh").alert_id == "1782896400.1"
+    raw["data"]["pad"] = "x" * (pad + 1)
+    with pytest.raises(IngestError, match="larger than"):
+        load_alert(json.dumps(raw), fmt="wazuh")

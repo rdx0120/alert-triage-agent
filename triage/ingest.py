@@ -1,12 +1,15 @@
 """Alert ingestion: turn a raw Wazuh 4.x alert or a Sigma rule match into an Alert.
 
-Trust boundary. Rule metadata (rule ID, title, level, ATT&CK mapping) comes
-from the SIEM's own rule set and decides the alert's severity floor, so it is
-required and validated strictly: an alert without it is rejected rather than
-triaged on a guessed severity. Everything under Wazuh's `data` object and the
-Sigma `event` object is attacker-influenced (command lines, usernames, paths,
-log text). It is copied verbatim, within size limits, and is never mined for
-technique IDs or CVEs.
+Trust boundary. The rule ID, level and ATT&CK mapping are trusted rule
+metadata from the SIEM's own rule set; the level decides the alert's severity
+floor, so they are required and validated strictly: an alert without them is
+rejected rather than triaged on a guessed severity. The rule title is also
+required, but it can contain substituted event data (Wazuh rule descriptions
+embed decoded fields through `$(field)`), so later stages must treat it as
+untrusted text; an over-long title is truncated, not rejected. Everything under
+Wazuh's `data` object and the Sigma `event` object is attacker-influenced
+(command lines, usernames, paths, log text). It is copied verbatim, within size
+limits, and is never mined for technique IDs or CVEs.
 
 The caller states the format; there is no auto-detection, because a guess
 made from attacker-influenced fields could pick the wrong trust rules.
@@ -47,12 +50,21 @@ from .schemas import (
     Severity,
 )
 
-MAX_RAW_ALERT_BYTES = 64 * 1024
+# A maximum-length Windows command line (32,767 characters) appears twice in a
+# Wazuh alert, in data.win.eventdata.commandLine and again, with extra JSON
+# escaping, in full_log, which can exceed 64 KiB. A lower cap would let an
+# attacker keep a real alert from triage. The per-field, field-count and depth
+# caps below still bound what reaches later stages.
+MAX_RAW_ALERT_BYTES = 256 * 1024
 MAX_DEPTH = 5
 MAX_EVENT_KEYS = 50  # must equal the max_length of Alert.event
 MAX_KEY_CHARS = 128
 MAX_WARNINGS = 20  # must equal the max_length of Alert.ingest_warnings
 MAX_USER_CHARS = 256  # must equal the max_length of Alert.user
+MAX_TITLE_CHARS = 256  # must equal the max_length of Alert.rule_title
+MAX_TIMESTAMP_CHARS = 64  # must equal the max_length of Alert.timestamp
+MAX_TAGS = 20  # must equal the max_length of Alert.rule_tags
+TRUNCATION_MARKER = "...[truncated]"  # same marker the Alert model uses for event values
 
 SIGMA_TAG_PATTERN = r"^[a-z0-9._-]{1,64}$"
 
@@ -87,14 +99,20 @@ def load_alert(text: str | bytes, fmt: Literal["wazuh", "sigma"]) -> Alert:
     if len(data) > MAX_RAW_ALERT_BYTES:
         raise IngestError(f"input: larger than {MAX_RAW_ALERT_BYTES} bytes")
     try:
-        raw = json.loads(data.decode("utf-8"))
+        raw = json.loads(data.decode("utf-8"), parse_constant=_reject_constant)
     except (ValueError, RecursionError):
-        # ValueError covers bad UTF-8 and bad JSON; RecursionError covers
-        # arrays nested tens of thousands deep, which fit inside the size cap.
+        # ValueError covers bad UTF-8, bad JSON and NaN/Infinity; RecursionError
+        # covers arrays nested tens of thousands deep, which fit inside the size cap.
         raise IngestError("input: not valid JSON") from None
     if not isinstance(raw, dict):
         raise IngestError("input: top-level JSON value must be an object")
     return from_wazuh(raw) if fmt == "wazuh" else from_sigma_match(raw)
+
+
+def _reject_constant(name: str) -> Any:
+    # json.loads accepts NaN, Infinity and -Infinity, which are not valid JSON;
+    # letting them through would make every later JSON output invalid.
+    raise ValueError("non-standard JSON constant")
 
 
 # --- Wazuh 4.x -----------------------------------------------------------
@@ -121,7 +139,7 @@ def from_wazuh(raw: dict) -> Alert:
     warnings = _Warnings()
     alert_id = _require_str(raw, "id")
     rule_id = _require_str(raw, "rule.id")
-    rule_title = _require_str(raw, "rule.description")
+    rule_title = _title(raw, "rule.description", warnings)
     rule_level = wazuh_level_to_severity(_get(raw, "rule.level"))
 
     # Techniques come only from the rule's own MITRE mapping.
@@ -137,13 +155,13 @@ def from_wazuh(raw: dict) -> Alert:
                     bad += 1
             if bad:
                 warnings.add(f"rule.mitre.id: {_count(bad, 'malformed technique ID')} dropped")
+            rule_tags = _cap_tags(rule_tags, "rule.mitre.id", warnings)
         else:
             warnings.add("rule.mitre.id: not a list; ignored")
 
     host = _host(_get(raw, "agent.name"), "agent.name", warnings, warn_if_missing=True)
     user = _user(lambda name: _get(raw, name), WAZUH_USER_FIELDS, warnings)
-    timestamp = _get(raw, "timestamp")
-    timestamp = timestamp if isinstance(timestamp, str) else None
+    timestamp = _timestamp(_get(raw, "timestamp"), "timestamp", warnings)
 
     # CVEs come only from the vulnerability detector's field, never from event text.
     cves: list[str] = []
@@ -189,7 +207,7 @@ def from_sigma_match(raw: dict) -> Alert:
     """Normalize a parsed Sigma rule match (format in the module docstring)."""
     warnings = _Warnings()
     rule_id = _require_str(raw, "rule.id")
-    rule_title = _require_str(raw, "rule.title")
+    rule_title = _title(raw, "rule.title", warnings)
     rule_level = _get(raw, "rule.level")
     if rule_level not in SEVERITY_ORDER:
         raise IngestError("rule.level: must be one of " + ", ".join(SEVERITY_ORDER))
@@ -206,6 +224,7 @@ def from_sigma_match(raw: dict) -> Alert:
                     bad += 1
             if bad:
                 warnings.add(f"rule.tags: {_count(bad, 'malformed tag')} dropped")
+            rule_tags = _cap_tags(rule_tags, "rule.tags", warnings)
         else:
             warnings.add("rule.tags: not a list; ignored")
 
@@ -246,11 +265,22 @@ def from_sigma_match(raw: dict) -> Alert:
     fields = flat.out
     host_field = next((f for f in SIGMA_HOST_FIELDS if fields.get(f) is not None), None)
     host = _host(fields.get(host_field), f"event.{host_field}", warnings, warn_if_missing=False) if host_field else None
-    user = _user(fields.get, SIGMA_USER_FIELDS, warnings, prefix="event.")
+    user_field = next((f for f in SIGMA_USER_FIELDS if isinstance(fields.get(f), str)), None)
+    user = _user(fields.get, (user_field,), warnings, prefix="event.") if user_field else None
     if aggregate is not None:
-        timestamp = aggregate["first_seen"]
+        # The event is only the first of the correlated events. If the chosen
+        # field varies across them (11 accounts in a password spray), naming the
+        # first value as the alert's user or host would misrepresent the alert.
+        # The distinct count stays in the event as aggregate.distinct.<field>.
+        distinct = aggregate["distinct"]
+        if distinct.get(host_field, 1) > 1:
+            host = None
+        if distinct.get(user_field, 1) > 1:
+            user = None
+        timestamp = _timestamp(aggregate["first_seen"], "aggregate.first_seen", warnings)
     else:
-        timestamp = next((fields[f] for f in SIGMA_TIME_FIELDS if isinstance(fields.get(f), str)), None)
+        time_field = next((f for f in SIGMA_TIME_FIELDS if isinstance(fields.get(f), str)), None)
+        timestamp = _timestamp(fields[time_field], f"event.{time_field}", warnings) if time_field else None
 
     return _build(
         alert_id=alert_id,
@@ -362,6 +392,36 @@ def _require_str(raw: dict, path: str) -> str:
     if not isinstance(value, str) or not value:
         raise IngestError(f"{path}: missing or not a non-empty string")
     return value
+
+
+def _title(raw: dict, path: str, warnings: _Warnings) -> str:
+    # Required, but not trusted: Wazuh substitutes decoded event fields into
+    # rule descriptions, so an attacker can make the title long. Truncating
+    # instead of rejecting means a long value cannot keep the alert from triage.
+    value = _require_str(raw, path)
+    if len(value) > MAX_TITLE_CHARS:
+        warnings.add(f"{path}: longer than {MAX_TITLE_CHARS} characters; truncated")
+        return value[: MAX_TITLE_CHARS - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+    return value
+
+
+def _timestamp(value: Any, path: str, warnings: _Warnings) -> str | None:
+    # The Sigma timestamp comes from event data. Too long to store: leave it
+    # empty rather than reject the alert.
+    if not isinstance(value, str):
+        return None
+    if len(value) > MAX_TIMESTAMP_CHARS:
+        warnings.add(f"{path}: longer than {MAX_TIMESTAMP_CHARS} characters; timestamp left empty")
+        return None
+    return value
+
+
+def _cap_tags(tags: list[str], path: str, warnings: _Warnings) -> list[str]:
+    # Keep the first MAX_TAGS valid tags rather than reject the whole alert.
+    if len(tags) > MAX_TAGS:
+        warnings.add(f"{path}: {_count(len(tags) - MAX_TAGS, 'tag')} beyond the first {MAX_TAGS} dropped")
+        return tags[:MAX_TAGS]
+    return tags
 
 
 def _host(value: Any, path: str, warnings: _Warnings, warn_if_missing: bool) -> str | None:

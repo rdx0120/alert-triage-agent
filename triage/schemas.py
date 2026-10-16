@@ -57,7 +57,7 @@ class Alert(Strict):
     rule_tags: list[str] = Field(default_factory=list, max_length=20)
     host: str | None = Field(default=None, max_length=64)
     user: str | None = Field(default=None, max_length=256)
-    timestamp: str | None = None
+    timestamp: str | None = Field(default=None, max_length=64)
     cves: list[str] = Field(default_factory=list, max_length=20)
     # The raw event. Values only; everything in here is treated as untrusted data.
     event: dict[str, str | int | float | bool | None] = Field(default_factory=dict, max_length=50)

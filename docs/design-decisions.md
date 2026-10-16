@@ -183,10 +183,12 @@ when packaging is added.
 
 ## DD-011: Alert ingestion separates trusted rule metadata from untrusted event data
 
-**Context.** Alerts arrive from Wazuh (4.x JSON) or as Sigma rule matches. Rule
-metadata (ID, title, level, ATT&CK mapping) comes from the detection rule set;
-event data (command lines, usernames, paths, log text) is attacker-influenced.
-The rule level becomes the severity floor, so it must not be guessed.
+**Context.** Alerts arrive from Wazuh (4.x JSON) or as Sigma rule matches. The
+rule ID, level and ATT&CK mapping come from the detection rule set; event data
+(command lines, usernames, paths, log text) is attacker-influenced. The rule
+title sits in between: Wazuh rule descriptions can embed decoded event fields
+through `$(field)` substitution. The rule level becomes the severity floor, so
+it must not be guessed.
 
 **Decision.** The caller states the input format; there is no auto-detection.
 An alert is rejected if its rule ID, title or level is missing or invalid.
@@ -194,17 +196,24 @@ Wazuh levels map to severities as 0-3 informational, 4-6 low, 7-9 medium,
 10-13 high and 14-16 critical, following Wazuh's level descriptions. Technique
 IDs are read only from rule metadata and CVEs only from the scanner's
 vulnerability field, never by matching event text. Event data is copied
-verbatim within size limits: 64 KiB per raw alert (checked before parsing),
-nesting depth 5, 50 fields and the existing 4,096-character field cap.
-Optional fields that fail validation, such as a malformed hostname, are left
-empty and recorded in `ingest_warnings`, using fixed messages that never repeat
-input values. Correlated Sigma matches become one alert that carries the match
-count, first and last timestamps and distinct-value counts.
+verbatim within size limits: 256 KiB per raw alert (checked before parsing;
+enough for a maximum-length Windows command line recorded twice), nesting depth
+5, 50 fields, 4,096 characters per field and 64 characters for timestamps.
+Values that would otherwise force a rejection without being essential, such as
+an over-long rule title, a malformed hostname or more than 20 tags, are
+truncated or left empty and recorded in `ingest_warnings`, using fixed messages
+that never repeat input values. Correlated Sigma matches become one alert that
+carries the match count, first and last timestamps and distinct-value counts;
+a field that varies across the correlated events is not reported as the
+alert's user or host.
 
 **Consequences.** Event text cannot add techniques or CVEs, cannot change the
 rule level recorded on the alert, and cannot reach tool lookups through the
 host field. (Keeping the final severity at or above that level is a separate,
-planned output control.) Evidence is preserved exactly as received, including any injection
-attempt, so analysts and later guardrails can see it. Alerts without usable
-rule metadata are refused rather than triaged on a guessed severity. Other
-input formats, such as Wazuh 5.x findings, need their own normalizer.
+planned output control.) Attacker-influenced values cannot get an alert
+rejected by being too long. Evidence is preserved exactly as received,
+including any injection attempt, so analysts and later guardrails can see it.
+Alerts without usable rule metadata are refused rather than triaged on a
+guessed severity; a refusal is an error the caller must report, never a silent
+drop. Other input formats, such as Wazuh 5.x findings, need their own
+normalizer.
