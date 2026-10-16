@@ -11,9 +11,9 @@ than in the prompt: the agent has no tools that can change anything, every tool
 call passes through a validating gateway, and empty or failed lookups are
 reported as missing data instead of being filled in.
 
-> **Status:** early development. The data layer, the tool gateway and the four
-> read-only tools are implemented and tested. Alert ingestion, the agent loop,
-> output guardrails, the service and evaluation are planned; see
+> **Status:** early development. The data layer, the tool gateway, the four
+> read-only tools and alert ingestion are implemented and tested. The agent
+> loop, output guardrails, the service and evaluation are planned; see
 > [Roadmap](#roadmap). No evaluation results are published yet.
 
 **Scope.** Lab project. All alerts, hosts and inventory data are synthetic;
@@ -27,7 +27,7 @@ service.
         │
         ▼
  ┌─────────────────────────────┐
- │ normalize + validate        │  Pydantic models, field size caps          [partial]
+ │ normalize + validate        │  Wazuh 4.x and Sigma inputs, size caps     [implemented]
  └─────────────┬───────────────┘
                ▼
  ┌─────────────────────────────┐
@@ -69,6 +69,9 @@ service.
 | `requires_human_approval` fixed to `true` by the schema | Autonomous containment | Implemented |
 | Fail closed: an `ok` result must carry data; errors, empty and unknown results are distinct statuses | Silent failures read as "nothing found" | Implemented |
 | Untrusted input not echoed in validation errors | Re-injection through error messages | Implemented |
+| Raw alert caps: 64 KiB per alert (checked before parsing), nesting depth 5, 50 event fields | Oversized or deeply nested input | Implemented |
+| Techniques and CVEs read only from rule metadata and scanner fields, never from event text | Attacker text steering severity or lookups | Implemented |
+| Hostname and alert-ID allow-list patterns; ingestion problems reported as `ingest_warnings` | Injected identifiers; silently dropped fields | Implemented |
 | Revoked ATT&CK IDs resolved to their replacement | Stale technique mappings | Implemented |
 | Runbook retrieval with a minimum similarity score | Irrelevant context presented as guidance | Implemented |
 | Spotlighting (datamarking) of alert fields | Indirect prompt injection | Planned |
@@ -86,6 +89,8 @@ A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
 | Component | Location | Notes |
 |---|---|---|
 | Schemas | `triage/schemas.py` | `Alert`, `ToolResult`, `TriageSummary`; unknown fields rejected |
+| Ingestion | `triage/ingest.py` | Wazuh 4.x and Sigma-match normalizers; explicit format; rejects alerts without rule metadata |
+| Sample alerts | `samples/alerts/` | Synthetic Wazuh and Sigma inputs; Sigma samples generated from the vendored rule fixtures |
 | Tool gateway | `triage/tools/registry.py` | Allow-list, argument validation, error handling, deterministic evidence IDs |
 | `attack_lookup` | `triage/tools/attack.py` | ATT&CK Enterprise v20.0; retired IDs return their replacement |
 | `kev_epss_lookup` | `triage/tools/kev_epss.py` | CISA KEV membership and FIRST EPSS score; missing EPSS reported as unknown |
@@ -141,7 +146,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Capability | Contents | Status |
 |---|---|---|
 | Data and tools | Schemas, versioned snapshots, four read-only tools, tool gateway | Implemented |
-| Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Planned |
+| Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
 | Deterministic enrichment | Code-driven lookups before the model runs | Planned |
 | Agent loop and model backends | Rule-based baseline, Ollama (local), Claude API (optional); step and tool-call caps; audit log | Planned |
 | Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Spotlighting, injection tripwire, severity floors, output evidence and ATT&CK validation, and summary-level fail-closed statuses are planned | Partial |

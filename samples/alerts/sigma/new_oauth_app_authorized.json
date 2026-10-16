@@ -1,0 +1,21 @@
+{
+  "alert_id": "sigma-new-oauth-app-authorized",
+  "rule": {
+    "id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    "title": "New Third-Party OAuth Application Authorized in Google Workspace",
+    "level": "medium",
+    "tags": [
+      "attack.persistence",
+      "attack.t1550",
+      "attack.t1528"
+    ]
+  },
+  "event": {
+    "event.name": "authorize",
+    "actor.email": "nurse01@example-clinic.test",
+    "client_id": "unknown-3rd-party-app-98765",
+    "app.name": "QuickMail Assistant",
+    "scope.value": "https://mail.google.com/",
+    "event.time": "2026-07-01T14:22:00Z"
+  }
+}

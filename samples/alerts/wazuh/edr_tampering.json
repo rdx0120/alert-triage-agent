@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-07-01T11:02:47.336+0000",
+  "rule": {
+    "level": 14,
+    "description": "Endpoint protection service terminated with taskkill",
+    "id": "100011",
+    "mitre": {
+      "id": ["T1562.001"],
+      "tactic": ["Defense Evasion"],
+      "technique": ["Disable or Modify Tools"]
+    },
+    "firedtimes": 1,
+    "groups": ["windows", "sysmon", "sysmon_event1", "edr_tampering"]
+  },
+  "agent": {
+    "id": "002",
+    "name": "CLINIC-FRONT02",
+    "ip": "192.0.2.12"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1782903767.121377",
+  "decoder": {
+    "name": "windows_eventchannel"
+  },
+  "location": "EventChannel",
+  "data": {
+    "win": {
+      "system": {
+        "providerName": "Microsoft-Windows-Sysmon",
+        "providerGuid": "{5770385f-c22a-43e0-bf4c-06f5698ffbd9}",
+        "eventID": "1",
+        "version": "5",
+        "level": "4",
+        "task": "1",
+        "opcode": "0",
+        "systemTime": "2026-07-01T11:02:46.6021455Z",
+        "eventRecordID": "30552",
+        "channel": "Microsoft-Windows-Sysmon/Operational",
+        "computer": "CLINIC-FRONT02",
+        "severityValue": "INFORMATION"
+      },
+      "eventdata": {
+        "utcTime": "2026-07-01 11:02:46.602",
+        "processId": "8256",
+        "image": "C:\\Windows\\System32\\taskkill.exe",
+        "originalFileName": "taskkill.exe",
+        "commandLine": "taskkill /F /IM EPProtectedService.exe",
+        "currentDirectory": "C:\\Users\\frontdesk02\\",
+        "user": "CLINIC\\frontdesk02",
+        "integrityLevel": "High",
+        "parentProcessId": "7904",
+        "parentImage": "C:\\Windows\\System32\\cmd.exe",
+        "parentCommandLine": "\"C:\\Windows\\System32\\cmd.exe\""
+      }
+    }
+  }
+}
