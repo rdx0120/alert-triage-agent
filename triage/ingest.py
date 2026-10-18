@@ -9,7 +9,8 @@ embed decoded fields through `$(field)`), so later stages must treat it as
 untrusted text; an over-long title is truncated, not rejected. Everything under
 Wazuh's `data` object and the Sigma `event` object is attacker-influenced
 (command lines, usernames, paths, log text). It is copied verbatim, within size
-limits, and is never mined for technique IDs or CVEs.
+limits and apart from the malformed-text repair described in load_alert, and is
+never mined for technique IDs or CVEs.
 
 The caller states the format; there is no auto-detection, because a guess
 made from attacker-influenced fields could pick the wrong trust rules.
@@ -37,7 +38,7 @@ import hashlib
 import json
 import math
 import re
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Sequence
 
 from pydantic import ValidationError
 
@@ -87,10 +88,24 @@ class IngestError(ValueError):
 
 
 def load_alert(text: str | bytes, fmt: Literal["wazuh", "sigma"]) -> Alert:
-    """Parse one raw alert of the stated format. Applies the size cap before parsing."""
+    """Parse one raw alert of the stated format. The entry point for untrusted raw input.
+
+    Applies the size cap before parsing, and replaces malformed text (invalid
+    UTF-8, unpaired surrogates) and drops repeated keys before from_wazuh or
+    from_sigma_match see the parsed object.
+    """
+    # Malformed text and repeated keys can come from attacker-influenced input.
+    # Rejecting malformed text would let an attacker keep an alert from triage,
+    # and json.loads on its own keeps the last value of a repeated key, so a
+    # later key would silently overwrite an earlier one. Instead, malformed
+    # text becomes U+FFFD, the first value of a repeated key is kept, and both
+    # are reported as counts in ingest_warnings.
     if fmt not in ("wazuh", "sigma"):
         raise IngestError("fmt: must be 'wazuh' or 'sigma'")
+    surrogates = 0
     if isinstance(text, str):
+        # A str can hold lone surrogates, which UTF-8 cannot encode.
+        text, surrogates = _SURROGATE.subn("\ufffd", text)
         data = text.encode("utf-8")
     elif isinstance(text, bytes):
         data = text
@@ -100,19 +115,100 @@ def load_alert(text: str | bytes, fmt: Literal["wazuh", "sigma"]) -> Alert:
     if len(data) > MAX_RAW_ALERT_BYTES:
         raise IngestError(f"input: larger than {MAX_RAW_ALERT_BYTES} bytes")
     try:
+        decoded = data.decode("utf-8")
+        invalid_bytes = 0
+    except UnicodeDecodeError:
+        # surrogateescape maps each invalid byte to its own placeholder
+        # (U+DC80-U+DCFF), so two different malformed keys stay distinct until
+        # replacement and duplicate detection run together in the object hook.
+        # Decoding with replacement first would let json.loads merge them before
+        # any check. At this point the text can contain surrogates only from
+        # surrogateescape, so the count is exact.
+        decoded = data.decode("utf-8", errors="surrogateescape")
+        invalid_bytes = len(_ESCAPED_BYTE.findall(decoded))
+    hook = _ObjectHook()
+    try:
         raw = json.loads(
-            data.decode("utf-8"),
+            decoded,
             parse_constant=_reject_constant,
             parse_float=_parse_float,
             parse_int=_parse_int,
+            object_pairs_hook=hook,
         )
     except (ValueError, RecursionError):
-        # ValueError covers bad UTF-8, bad JSON and NaN/Infinity; RecursionError
-        # covers arrays nested tens of thousands deep, which fit inside the size cap.
+        # ValueError covers bad JSON (including invalid bytes outside a string)
+        # and NaN/Infinity; RecursionError covers arrays nested tens of
+        # thousands deep, which fit inside the size cap.
         raise IngestError("input: not valid JSON") from None
     if not isinstance(raw, dict):
         raise IngestError("input: top-level JSON value must be an object")
-    return from_wazuh(raw) if fmt == "wazuh" else from_sigma_match(raw)
+    # The hook replaced both invalid-byte placeholders and surrogates that came
+    # from JSON escapes such as \ud800; only the latter are unpaired surrogates.
+    unpaired_surrogates = surrogates + hook.replaced - invalid_bytes
+    parse_warnings = []
+    if invalid_bytes:
+        parse_warnings.append(f"input: {_count(invalid_bytes, 'invalid UTF-8 byte')} replaced with U+FFFD")
+    if unpaired_surrogates:
+        parse_warnings.append(f"input: {_count(unpaired_surrogates, 'unpaired surrogate')} replaced with U+FFFD")
+    if hook.duplicates:
+        parse_warnings.append(f"input: {_count(hook.duplicates, 'duplicate key')} dropped (first kept)")
+    if fmt == "wazuh":
+        return from_wazuh(raw, parse_warnings=parse_warnings)
+    return from_sigma_match(raw, parse_warnings=parse_warnings)
+
+
+_SURROGATE = re.compile("[\ud800-\udfff]")
+_ESCAPED_BYTE = re.compile("[\udc80-\udcff]")
+
+
+class _ObjectHook:
+    """json.loads object_pairs_hook: replaces lone surrogates and keeps the first of repeated keys.
+
+    Replacement and duplicate detection happen in one place, before the object
+    exists, so neither a malformed key nor a repeated key can overwrite an
+    earlier value. Counts come only from these mechanisms: a U+FFFD that was
+    already in the input is never counted.
+    """
+
+    def __init__(self) -> None:
+        self.replaced = 0
+        self.duplicates = 0
+
+    def __call__(self, pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        obj: dict[str, Any] = {}
+        for key, value in pairs:
+            key = self._text(key)
+            # Values of dropped keys are still processed, so every replacement
+            # is counted and the unpaired-surrogate count stays exact.
+            if isinstance(value, str):
+                value = self._text(value)
+            elif isinstance(value, list):
+                self._list(value)
+            # Objects in a value were already processed by their own hook call.
+            if key in obj:
+                self.duplicates += 1
+                continue
+            obj[key] = value
+        return obj
+
+    def _text(self, s: str) -> str:
+        # json.loads joins valid escaped pairs into one character, so any
+        # surrogate left here is unpaired or an invalid-byte placeholder.
+        s, n = _SURROGATE.subn("\ufffd", s)
+        self.replaced += n
+        return s
+
+    def _list(self, items: list) -> None:
+        # An explicit stack rather than recursion: lists can nest as deep as the
+        # parser allows. The lists are fresh from the parser, so they are edited in place.
+        stack = [items]
+        while stack:
+            current = stack.pop()
+            for i, item in enumerate(current):
+                if isinstance(item, str):
+                    current[i] = self._text(item)
+                elif isinstance(item, list):
+                    stack.append(item)
 
 
 def _reject_constant(name: str) -> Any:
@@ -160,9 +256,13 @@ def wazuh_level_to_severity(level: int) -> Severity:
     return "critical"
 
 
-def from_wazuh(raw: dict) -> Alert:
-    """Normalize a parsed Wazuh 4.x alert. Callers with raw text use load_alert (size cap)."""
-    warnings = _Warnings()
+def from_wazuh(raw: dict, *, parse_warnings: Sequence[str] = ()) -> Alert:
+    """Normalize a parsed Wazuh 4.x alert.
+
+    Callers with untrusted raw input use load_alert, which applies the size cap
+    and replaces malformed text before this function sees the parsed object.
+    """
+    warnings = _Warnings(parse_warnings)
     alert_id = _require_str(raw, "id")
     rule_id = _require_str(raw, "rule.id")
     rule_title = _title(raw, "rule.description", warnings)
@@ -229,9 +329,13 @@ def from_wazuh(raw: dict) -> Alert:
 # --- Sigma match ---------------------------------------------------------
 
 
-def from_sigma_match(raw: dict) -> Alert:
-    """Normalize a parsed Sigma rule match (format in the module docstring)."""
-    warnings = _Warnings()
+def from_sigma_match(raw: dict, *, parse_warnings: Sequence[str] = ()) -> Alert:
+    """Normalize a parsed Sigma rule match (format in the module docstring).
+
+    Callers with untrusted raw input use load_alert, which applies the size cap
+    and replaces malformed text before this function sees the parsed object.
+    """
+    warnings = _Warnings(parse_warnings)
     rule_id = _require_str(raw, "rule.id")
     rule_title = _title(raw, "rule.title", warnings)
     rule_level = _get(raw, "rule.level")
@@ -344,8 +448,11 @@ def _valid_aggregate(agg: Any) -> bool:
 class _Warnings:
     """De-duplicated, capped list of fixed-template warnings."""
 
-    def __init__(self) -> None:
+    def __init__(self, first: Sequence[str] = ()) -> None:
         self.items: list[str] = []
+        # Parse warnings go in first, so the cap can never push them out.
+        for message in first:
+            self.add(message)
 
     def add(self, message: str) -> None:
         if message not in self.items and len(self.items) < MAX_WARNINGS:

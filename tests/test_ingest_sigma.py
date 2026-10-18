@@ -330,3 +330,37 @@ def test_out_of_range_float_in_event_kept_as_text():
     alert = load_alert(json.dumps(raw).replace('"__NUMBER__"', "1e999"), fmt="sigma")
     assert alert.event["n"] == "1e999"
     json.dumps(alert.model_dump(), allow_nan=False)
+
+
+# --- Malformed text and repeated keys ----------------------------------------
+
+MARKER = "ZZ_MARKER_91bc"
+
+
+def test_event_keys_colliding_after_surrogate_replacement_keep_first_value():
+    """Two different escaped-surrogate keys cannot merge so that the second overwrites the first."""
+    raw = base()
+    raw["event"].update({"User\ud800": f"{MARKER} first", "User\udc00": f"{MARKER} second"})
+    alert = load_alert(json.dumps(raw), fmt="sigma")
+    assert alert.event["User�"] == f"{MARKER} first"
+    assert alert.user == "clinic-front01\\jsmith"
+    assert alert.ingest_warnings == [
+        "input: 2 unpaired surrogates replaced with U+FFFD",
+        "input: 1 duplicate key dropped (first kept)",
+    ]
+    for w in alert.ingest_warnings:
+        assert MARKER not in w
+
+
+def test_invalid_utf8_in_command_line_and_rule_title_replaced_not_rejected():
+    """Invalid bytes in event text or the rule title cannot keep the alert from triage."""
+    raw = base()
+    raw["rule"]["title"] = f"{MARKER} @T@"
+    raw["event"]["CommandLine"] = f"{MARKER} @C@"
+    data = json.dumps(raw).encode("utf-8").replace(b"@T@", b"\xff").replace(b"@C@", b"\xc3")
+    alert = load_alert(data, fmt="sigma")
+    assert alert.rule_title == f"{MARKER} �"
+    assert alert.event["CommandLine"] == f"{MARKER} �"
+    assert alert.ingest_warnings == ["input: 2 invalid UTF-8 bytes replaced with U+FFFD"]
+    for w in alert.ingest_warnings:
+        assert MARKER not in w
