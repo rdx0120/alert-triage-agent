@@ -217,3 +217,39 @@ Alerts without usable rule metadata are refused rather than triaged on a
 guessed severity; a refusal is an error the caller must report, never a silent
 drop. Other input formats, such as Wazuh 5.x findings, need their own
 normalizer.
+
+---
+
+## DD-012: Deterministic enrichment before the model, with explicit gaps
+
+**Context.** Triage needs the same context for every alert: ATT&CK details,
+asset context, KEV/EPSS data and the relevant runbook. Letting the model decide
+which lookups to run makes results vary between runs and lets attacker-worded
+alert text influence what is looked up. A lookup that finds nothing and a
+lookup that fails must also not look the same.
+
+**Decision.** Code runs a fixed sequence of read-only lookups before any model
+call: up to 5 techniques from the rule's ATT&CK mapping, the asset if the alert
+has a valid host, up to 5 CVEs from the scanner field, and one runbook search
+returning up to 3 results. Lookup arguments come only from rule metadata and
+allow-listed identifiers. The runbook query is built from the ATT&CK lookup
+results (ID and technique name), never from alert text. A retired technique is
+resolved by following its recorded replacements (up to 3 steps), and every
+lookup in the chain is kept as evidence. Every result goes into one evidence
+log per triage run. Evidence IDs are deterministic and carry 64 bits of
+SHA-256; the log de-duplicates on the exact tool and arguments, and an ID that
+would identify two different lookups raises an error instead of being shared.
+Anything that could not be determined is recorded as a gap with a fixed kind
+and reason (not on the alert, not found, over the cap, lookup failed, invalid
+input) and the evidence ID it came from. A failed lookup marks the enrichment
+`degraded`; "not found", such as a host missing from the inventory, is a
+finding and leaves it `complete`.
+
+**Consequences.** The same alert always produces the same evidence, so
+evaluation runs are reproducible and later output checks have a fixed set of
+evidence IDs to validate citations against. Attacker text cannot choose which
+lookups run or which runbook guidance is retrieved. Building the runbook query
+from technique names alone can rank a related runbook first; enrichment returns
+up to 3 results, and retrieval quality is measured with
+`scripts/runbook_retrieval_report.py` rather than assumed. Enrichment collects
+facts only; severity decisions belong to the output controls.

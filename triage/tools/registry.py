@@ -40,7 +40,8 @@ class Tool:
 
 def evidence_id(tool: str, args: dict[str, Any]) -> str:
     """Same tool + same args -> same ID, so citations are reproducible across runs."""
-    digest = hashlib.sha256(json.dumps(args, sort_keys=True, default=str).encode()).hexdigest()[:8]
+    # Long enough that matching an existing ID by brute force is impractical.
+    digest = hashlib.sha256(json.dumps(args, sort_keys=True, default=str).encode()).hexdigest()[:16]
     return f"{tool}:{digest}"
 
 

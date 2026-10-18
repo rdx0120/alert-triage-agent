@@ -110,6 +110,40 @@ class ToolResult(Strict):
         return self
 
 
+# --- Enrichment ----------------------------------------------------------
+
+GapKind = Literal["technique", "asset", "vulnerability", "runbook"]
+GapReason = Literal["not_on_alert", "not_found", "over_cap", "lookup_failed", "invalid_input"]
+
+
+class Gap(Strict):
+    """Something enrichment could not determine.
+
+    kind and reason are fixed enums and evidence_id is our own identifier, so
+    no alert text can reach later stages through a gap.
+    """
+
+    kind: GapKind
+    reason: GapReason
+    evidence_id: str | None = None   # the lookup that produced the gap, if any
+
+
+class TechniqueResolution(Strict):
+    requested: str = Field(pattern=TECHNIQUE_ID_PATTERN)   # retired ID from the alert
+    resolved: str = Field(pattern=TECHNIQUE_ID_PATTERN)    # current replacement
+    evidence_ids: list[str]                                 # both lookups
+
+
+class Enrichment(Strict):
+    alert_id: str
+    status: Literal["complete", "degraded"]
+    techniques: list[str]                  # current ATT&CK IDs with an ok lookup, alert order, unique
+    resolutions: list[TechniqueResolution] = []
+    runbook_query: str | None = None       # built from ATT&CK lookup results only
+    evidence: list[ToolResult]             # every lookup, in call order, unique evidence IDs
+    gaps: list[Gap] = []
+
+
 # --- Output --------------------------------------------------------------
 
 Confidence = Literal["confirmed", "likely", "unknown"]
