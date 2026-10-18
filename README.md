@@ -12,10 +12,10 @@ call passes through a validating gateway, and empty or failed lookups are
 reported as missing data instead of being filled in.
 
 > **Status:** early development. The data layer, the tool gateway, the four
-> read-only tools, alert ingestion and deterministic enrichment are
-> implemented and tested. The agent loop, output guardrails, the service and
-> evaluation are planned; see [Roadmap](#roadmap). No evaluation results are
-> published yet.
+> read-only tools, alert ingestion, deterministic enrichment and the agent
+> loop with a rule-based baseline backend are implemented and tested. The
+> local-model backend, output guardrails, the service and evaluation are
+> planned; see [Roadmap](#roadmap). No evaluation results are published yet.
 
 **Scope.** Lab project. All alerts, hosts and inventory data are synthetic;
 threat-intelligence data comes from public sources. It is not a production
@@ -57,9 +57,9 @@ service.
 
 | Input | Trust | Handling |
 |---|---|---|
-| Alert fields (command lines, usernames, paths) | Untrusted | Validated and size-capped; strict patterns before reaching any lookup; marked as untrusted data in the prompt (planned). The model may still be influenced by this text, so the output is not trusted either |
+| Alert fields (command lines, usernames, paths) | Untrusted | Validated and size-capped; strict patterns before reaching any lookup; sent in a separate prompt section that the instructions describe as data; spotlighting (datamarking) is planned. The model may still be influenced by this text, so the output is not trusted either |
 | Local snapshots (ATT&CK, KEV/EPSS, assets, runbooks) | Trusted, versioned | Built offline by `scripts/`, with source version and hash recorded |
-| Model output | Untrusted | Schema-validated; claims must cite evidence from this run's tool log (planned) |
+| Model output | Untrusted | Schema-validated draft (`ModelDraft`); each finding cites evidence IDs or alert fields. Checking those citations against the run is planned |
 
 ## Security controls
 
@@ -81,7 +81,8 @@ service.
 | Injection tripwire raising severity | Alerts that address the model | Planned |
 | Severity floor: final severity never below the detection rule's level | Injection downgrading an alert | Planned |
 | Evidence-ID citation check; ATT&CK ID allow-list on output | Hallucinated findings | Planned |
-| Step, tool-call and token caps | Unbounded consumption / cost | Planned |
+| Model-call, tool-call and time limits; prompts bounded in bytes so they fit the context window, with output space reserved | Unbounded consumption; silent context truncation | Implemented |
+| Model-requested lookups recorded separately from enrichment | Untraceable model-steered evidence | Implemented |
 | JSONL audit log of every tool call and model response (OpenTelemetry GenAI field names) | Lack of accountability | Planned |
 
 A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
@@ -95,6 +96,8 @@ A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
 | Ingestion | `triage/ingest.py` | Wazuh 4.x and Sigma-match normalizers; explicit format; rejects alerts without rule metadata |
 | Sample alerts | `samples/alerts/` | Synthetic Wazuh and Sigma inputs; Sigma samples generated from the vendored rule fixtures |
 | Enrichment | `triage/enrich.py`, `triage/evidence.py` | Deterministic lookups before the model; shared evidence log; explicit gaps; `complete` / `degraded` status |
+| Agent loop | `triage/agent.py`, `triage/prompt.py` | Two phases (investigation with capped tool calls, then a schema-constrained draft); byte budgets; fixed stop reasons |
+| Model backends | `triage/backends/` | One `chat()` interface; rule-based baseline implemented; Ollama planned |
 | Tool gateway | `triage/tools/registry.py` | Allow-list, argument validation, error handling, deterministic evidence IDs |
 | `attack_lookup` | `triage/tools/attack.py` | ATT&CK Enterprise v20.0; retired IDs return their replacement |
 | `kev_epss_lookup` | `triage/tools/kev_epss.py` | CISA KEV membership and FIRST EPSS score; missing EPSS reported as unknown |
@@ -152,7 +155,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Data and tools | Schemas, versioned snapshots, four read-only tools, tool gateway | Implemented |
 | Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
-| Agent loop and model backends | Rule-based baseline, Ollama (local), Claude API (optional); step and tool-call caps; audit log | Planned |
+| Agent loop and model backends | Agent loop, limits and the rule-based baseline are implemented. Ollama (local), Claude API (optional) and the audit log are planned | Partial |
 | Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Spotlighting, injection tripwire, severity floors, output evidence and ATT&CK validation, and summary-level fail-closed statuses are planned | Partial |
 | Service and packaging | FastAPI `POST /triage`, CLI, Docker, GitHub Actions CI with security scanning | Planned |
 | Evaluation and threat model | Labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, published results | Planned |

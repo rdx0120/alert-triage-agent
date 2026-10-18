@@ -11,7 +11,7 @@ an error, not something silently ignored.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -142,6 +142,110 @@ class Enrichment(Strict):
     runbook_query: str | None = None       # built from ATT&CK lookup results only
     evidence: list[ToolResult]             # every lookup, in call order, unique evidence IDs
     gaps: list[Gap] = []
+
+
+# --- Model draft and agent run ---------------------------------------------
+
+# Our own evidence IDs: a tool name and 16 hex digits (registry.evidence_id).
+EVIDENCE_ID_PATTERN = r"^[a-z][a-z0-9_]{0,63}:[0-9a-f]{16}$"
+AlertField = Literal["rule_id", "rule_level", "rule_tags", "rule_title",
+                     "host", "user", "timestamp", "cves", "event"]
+
+EvidenceIdStr = Annotated[str, Field(pattern=EVIDENCE_ID_PATTERN)]
+
+# Must be at least the number of gaps enrichment can produce, so the rule-based
+# baseline can report every gap even when all lookups fail.
+MAX_MISSING_DATA = 16
+
+
+class DraftSources(Strict):
+    """What a finding relies on: lookups from this run, alert fields, or both.
+
+    Both kinds are checkable: an evidence ID against the run's log and an
+    alert field against the alert, so an uncited finding is rejected here.
+    """
+
+    evidence_ids: list[EvidenceIdStr] = Field(default_factory=list, max_length=10)
+    alert_fields: list[AlertField] = Field(default_factory=list, max_length=9)
+
+    @model_validator(mode="after")
+    def _cites_something(self) -> "DraftSources":
+        if not self.evidence_ids and not self.alert_fields:
+            raise ValueError("a finding must cite evidence_ids or alert_fields")
+        return self
+
+
+class DraftTechnique(DraftSources):
+    technique_id: str = Field(pattern=TECHNIQUE_ID_PATTERN)
+
+
+class DraftSeverity(DraftSources):
+    value: Severity
+    rationale: str = Field(max_length=600)
+
+
+class DraftStep(DraftSources):
+    step: str = Field(max_length=300)
+
+
+class DraftContainment(DraftSources):
+    action: str = Field(max_length=300)
+    # Literal[True]: a False here fails validation. The model can suggest, never approve.
+    requires_human_approval: Literal[True] = True
+
+
+class DraftMissing(DraftSources):
+    kind: Literal["technique", "asset", "vulnerability", "runbook", "other"]
+    description: str = Field(max_length=200)
+
+
+class ModelDraft(Strict):
+    """What a backend returns for one alert: unchecked model output.
+
+    It has no field that closes, dismisses or approves anything. Only the
+    later guardrail stage may turn it into a TriageSummary.
+    """
+
+    technique: DraftTechnique | None = None
+    severity: DraftSeverity
+    next_steps: list[DraftStep] = Field(max_length=8)
+    containment: list[DraftContainment] = Field(max_length=5)
+    missing_data: list[DraftMissing] = Field(max_length=MAX_MISSING_DATA)
+
+
+StopReason = Literal["completed", "budget_exceeded", "backend_error", "invalid_output"]
+EvidenceOrigin = Literal["enrichment", "model"]
+ModelPhase = Literal["investigate", "final", "repair"]
+
+
+class ModelCallRecord(Strict):
+    phase: ModelPhase
+    request_bytes: int          # len(serialize_request(request)), the bytes sent
+    token_bound: int            # upper bound on the request's tokens
+    input_tokens: int | None    # as reported by the backend, if it reports them
+    output_tokens: int | None
+    tool_calls_requested: int = 0
+    tool_calls_run: int = 0
+    tool_calls_dropped: int = 0
+
+
+class AgentResult(Strict):
+    alert_id: str
+    backend: str
+    stop_reason: StopReason
+    draft: ModelDraft | None
+    enrichment: Enrichment
+    evidence: list[ToolResult]                  # every lookup of the run, call order
+    evidence_origin: dict[str, EvidenceOrigin]  # evidence ID -> who asked for it
+    model_calls: list[ModelCallRecord]
+    tool_calls: int
+    validation_errors: list[str] = []           # sanitized paths from the last failed validation
+
+    @model_validator(mode="after")
+    def _draft_only_when_completed(self) -> "AgentResult":
+        if (self.draft is not None) != (self.stop_reason == "completed"):
+            raise ValueError("a draft is present if and only if stop_reason is 'completed'")
+        return self
 
 
 # --- Output --------------------------------------------------------------

@@ -59,8 +59,13 @@ def run_tool(tools: dict[str, Tool], name: str, raw_args: dict[str, Any]) -> Too
     try:
         args = tool.args_model.model_validate(raw_args)
     except ValidationError as e:
-        # Keep the message short and free of the raw (untrusted) input.
-        fields = ", ".join(".".join(map(str, err["loc"])) or "args" for err in e.errors())
+        # Keep the message short and free of the raw (untrusted) input. Extra
+        # argument names come from the caller, which can be the model, so only
+        # our own field names are echoed (DD-002).
+        known = tool.args_model.model_fields
+        fields = ", ".join(
+            ".".join(str(p) if isinstance(p, int) or p in known else "<unknown>" for p in err["loc"]) or "args"
+            for err in e.errors())
         return result("invalid_input", error=f"invalid arguments: {fields}")
 
     try:
