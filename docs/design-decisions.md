@@ -202,21 +202,26 @@ enough for a maximum-length Windows command line recorded twice), nesting depth
 Values that would otherwise force a rejection without being essential, such as
 an over-long rule title, a malformed hostname or more than 20 tags, are
 truncated or left empty and recorded in `ingest_warnings`, using fixed messages
-that never repeat input values. Correlated Sigma matches become one alert that
-carries the match count, first and last timestamps and distinct-value counts;
-a field that varies across the correlated events is not reported as the
-alert's user or host.
+that never repeat input values. Invalid UTF-8 bytes and unpaired UTF-16
+surrogates are replaced with U+FFFD rather than rejected, and when a JSON
+object repeats a key, including two keys that become identical after
+replacement, the first value is kept; both are counted in `ingest_warnings`.
+Correlated Sigma matches become one alert that carries the match count, first
+and last timestamps and distinct-value counts; a field that varies across the
+correlated events is not reported as the alert's user or host.
 
 **Consequences.** Event text cannot add techniques or CVEs, cannot change the
 rule level recorded on the alert, and cannot reach tool lookups through the
 host field. (Keeping the final severity at or above that level is a separate,
 planned output control.) Attacker-influenced values cannot get an alert
-rejected by being too long. Evidence is preserved exactly as received,
-including any injection attempt, so analysts and later guardrails can see it.
-Alerts without usable rule metadata are refused rather than triaged on a
-guessed severity; a refusal is an error the caller must report, never a silent
-drop. Other input formats, such as Wazuh 5.x findings, need their own
-normalizer.
+rejected by being too long or by containing text that is not valid Unicode.
+Evidence is preserved exactly as received, including any injection attempt, so
+analysts and later guardrails can see it. The exceptions are undecodable bytes
+and unpaired surrogates, which become U+FFFD (the source SIEM keeps the
+original), and repeated keys, of which only the first value is kept. Alerts
+without usable rule metadata are refused rather than triaged on a guessed
+severity; a refusal is an error the caller must report, never a silent drop.
+Other input formats, such as Wazuh 5.x findings, need their own normalizer.
 
 ---
 

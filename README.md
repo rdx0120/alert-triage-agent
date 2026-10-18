@@ -71,6 +71,7 @@ service.
 | Fail closed: an `ok` result must carry data; errors, empty and unknown results are distinct statuses | Silent failures read as "nothing found" | Implemented |
 | Untrusted input not echoed in validation errors | Re-injection through error messages | Implemented |
 | Raw alert caps: 256 KiB per alert (checked before parsing), nesting depth 5, 50 event fields, 4,096 characters per field | Oversized or deeply nested input | Implemented |
+| Invalid UTF-8 and unpaired surrogates replaced with U+FFFD; repeated JSON keys keep the first value; both counted in `ingest_warnings` | Alerts kept from triage by malformed text; values overwritten through repeated keys | Implemented |
 | Techniques and CVEs read only from rule metadata and scanner fields, never from event text | Attacker text steering severity or lookups | Implemented |
 | Hostname and alert-ID allow-list patterns; ingestion problems reported as `ingest_warnings` | Injected identifiers; silently dropped fields | Implemented |
 | Revoked ATT&CK IDs resolved to their replacement | Stale technique mappings | Implemented |

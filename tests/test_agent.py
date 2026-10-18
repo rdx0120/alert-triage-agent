@@ -99,12 +99,26 @@ def test_heuristic_ignores_injected_text(settings, tools):
 
 def test_heuristic_survives_lone_surrogates(settings, tools):
     """Unencodable characters in alert text must not crash the run."""
-    # Alert validation rejects lone surrogates; model_copy skips validation,
-    # as any code building an Alert without validating it would.
+    # Alert rejects lone surrogates in its plain string fields (such as user)
+    # but accepts them in event values. model_copy builds an alert with both,
+    # as code constructing one without validation could, so the prompt's
+    # clean() is still exercised.
     alert = _powershell()
     alert = alert.model_copy(update={"user": "bad\ud800user", "event": {**alert.event, "cmd": "x\udfffy"}})
     result = run_agent(alert, HeuristicBackend(), settings=settings, tools=tools)
     assert result.stop_reason == "completed"
+
+
+def test_heuristic_runs_on_alert_with_malformed_text(settings, tools):
+    """Malformed text repaired at ingestion cannot keep an alert from being triaged."""
+    raw = json.loads(POWERSHELL.read_text(encoding="utf-8"))
+    raw["data"]["win"]["eventdata"]["user"] += "\ud800"  # written as an escaped lone surrogate
+    raw["data"]["win"]["eventdata"]["commandLine"] += "@BAD@"
+    data = json.dumps(raw).encode("utf-8").replace(b"@BAD@", b"\xff")
+    alert = load_alert(data, fmt="wazuh")
+    assert alert.user.endswith("\ufffd")
+    result = run_agent(alert, HeuristicBackend(), settings=settings, tools=tools)
+    assert result.stop_reason == "completed" and result.backend == "heuristic"
 
 
 def test_heuristic_reports_every_gap_when_lookups_fail(settings, tools):

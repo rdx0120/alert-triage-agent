@@ -15,6 +15,7 @@ from triage.ingest import (
     MAX_WARNINGS,
     IngestError,
     _Warnings,
+    from_sigma_match,
     from_wazuh,
     load_alert,
     wazuh_level_to_severity,
@@ -522,3 +523,230 @@ def test_valid_alert_one_byte_over_cap_rejected():
     raw["data"]["pad"] = "x" * (pad + 1)
     with pytest.raises(IngestError, match="larger than"):
         load_alert(json.dumps(raw), fmt="wazuh")
+
+
+# --- Malformed text and repeated keys ----------------------------------------
+
+BAD = "@BAD@"  # placeholder swapped for raw bytes after serialization
+
+
+def to_bytes(raw: dict, swaps: dict[str, bytes]) -> bytes:
+    """Serialize `raw`, then replace each placeholder with raw bytes that may be invalid UTF-8."""
+    data = json.dumps(raw).encode("utf-8")
+    for placeholder, value in swaps.items():
+        assert data.count(placeholder.encode("utf-8")) == 1
+        data = data.replace(placeholder.encode("utf-8"), value)
+    return data
+
+
+def assert_no_marker(alert: Alert) -> None:
+    for w in alert.ingest_warnings:
+        assert MARKER not in w
+
+
+def test_invalid_utf8_in_command_line_replaced_not_rejected():
+    """An invalid byte in attacker-controlled event text cannot keep the alert from triage."""
+    raw = base()
+    raw["data"]["win"]["eventdata"]["commandLine"] = f"{MARKER} {BAD}"
+    alert = load_alert(to_bytes(raw, {BAD: b"\xff"}), fmt="wazuh")
+    assert alert.event["data.win.eventdata.commandLine"] == f"{MARKER} \ufffd"
+    assert alert.ingest_warnings == ["input: 1 invalid UTF-8 byte replaced with U+FFFD"]
+    assert_no_marker(alert)
+
+
+def test_invalid_utf8_in_rule_description_replaced_not_rejected():
+    """Invalid bytes substituted into the rule title cannot keep the alert from triage."""
+    raw = base()
+    raw["rule"]["description"] = f"{MARKER} {BAD}"
+    alert = load_alert(to_bytes(raw, {BAD: b"\xff\xfe"}), fmt="wazuh")
+    assert alert.rule_title == f"{MARKER} \ufffd\ufffd"
+    assert alert.ingest_warnings == ["input: 2 invalid UTF-8 bytes replaced with U+FFFD"]
+    assert_no_marker(alert)
+
+
+def test_escaped_lone_surrogates_in_plain_fields_replaced_not_rejected():
+    """Escaped lone surrogates in user, rule title or timestamp cannot get the alert rejected."""
+    raw = base()
+    # json.dumps writes these as \ud800 and \udc80 escapes; not adjacent, so never a valid pair.
+    raw["data"]["win"]["eventdata"]["user"] = f"{MARKER}\ud800x\udc80"
+    raw["rule"]["description"] = f"{MARKER}\udc80 title \ud800"
+    raw["timestamp"] = f"{MARKER}\ud800T\udc80"
+    text = json.dumps(raw)
+    assert "\\ud800" in text and "\\udc80" in text
+    alert = load_alert(text, fmt="wazuh")
+    assert alert.user == f"{MARKER}\ufffdx\ufffd"
+    assert alert.rule_title == f"{MARKER}\ufffd title \ufffd"
+    assert alert.timestamp == f"{MARKER}\ufffdT\ufffd"
+    assert alert.ingest_warnings == ["input: 6 unpaired surrogates replaced with U+FFFD"]
+    assert_no_marker(alert)
+
+
+def test_keys_colliding_after_byte_replacement_keep_first_value():
+    """Two different malformed keys cannot merge so that the second overwrites the first."""
+    raw = base()
+    raw["data"]["win"]["eventdata"].update({"@K1@": "first", "@K2@": "second"})
+    data = to_bytes(raw, {"@K1@": MARKER.encode() + b"\xff", "@K2@": MARKER.encode() + b"\xfe"})
+    alert = load_alert(data, fmt="wazuh")
+    assert alert.event[f"data.win.eventdata.{MARKER}\ufffd"] == "first"
+    assert [k for k in alert.event if MARKER in k] == [f"data.win.eventdata.{MARKER}\ufffd"]
+    assert alert.ingest_warnings == [
+        "input: 2 invalid UTF-8 bytes replaced with U+FFFD",
+        "input: 1 duplicate key dropped (first kept)",
+    ]
+    assert_no_marker(alert)
+
+
+def test_keys_colliding_after_surrogate_replacement_keep_first_value():
+    """Two different escaped-surrogate keys cannot merge so that the second overwrites the first."""
+    raw = base()
+    raw["data"]["win"]["eventdata"].update({f"{MARKER}\ud800": "first", f"{MARKER}\udc00": "second"})
+    alert = load(raw)
+    assert alert.event[f"data.win.eventdata.{MARKER}\ufffd"] == "first"
+    assert alert.ingest_warnings == [
+        "input: 2 unpaired surrogates replaced with U+FFFD",
+        "input: 1 duplicate key dropped (first kept)",
+    ]
+    assert_no_marker(alert)
+
+
+def test_repeated_key_keeps_first_value():
+    """A repeated key later in the raw JSON cannot silently overwrite the earlier value."""
+    text = json.dumps(base())
+    old = '"commandLine": "whoami"'
+    assert text.count(old) == 1
+    text = text.replace(old, f'{old}, "commandLine": "{MARKER} second"')
+    alert = load_alert(text, fmt="wazuh")
+    assert alert.event["data.win.eventdata.commandLine"] == "whoami"
+    assert alert.ingest_warnings == ["input: 1 duplicate key dropped (first kept)"]
+    assert_no_marker(alert)
+
+
+def test_legitimate_replacement_character_unchanged_and_not_counted():
+    """A U+FFFD already in the input is evidence as received, not a repair to report."""
+    raw = base()
+    raw["data"]["win"]["eventdata"]["commandLine"] = f"{MARKER} literal \ufffd"
+    raw["data"]["win"]["eventdata"]["user"] = f"{MARKER} {BAD}"
+    text = json.dumps(raw, ensure_ascii=False).replace(BAD, "\\ufffd")
+    assert "literal \ufffd" in text and "\\ufffd" in text
+    alert = load_alert(text.encode("utf-8"), fmt="wazuh")
+    assert alert.event["data.win.eventdata.commandLine"] == f"{MARKER} literal \ufffd"
+    assert alert.user == f"{MARKER} \ufffd"
+    assert alert.ingest_warnings == []
+
+
+def test_valid_escaped_surrogate_pair_unchanged():
+    """A valid escaped pair is a real character and must not be replaced or reported."""
+    raw = base()
+    raw["data"]["win"]["eventdata"]["commandLine"] = f"{MARKER} \U0001F600"
+    text = json.dumps(raw)
+    assert "\\ud83d\\ude00" in text
+    alert = load_alert(text, fmt="wazuh")
+    assert alert.event["data.win.eventdata.commandLine"] == f"{MARKER} \U0001F600"
+    assert alert.ingest_warnings == []
+
+
+def test_escaped_high_surrogate_then_invalid_byte_both_replaced():
+    """An escaped high surrogate cannot pair with an invalid byte's placeholder."""
+    raw = base()
+    raw["data"]["win"]["eventdata"]["commandLine"] = f"{MARKER}\ud800{BAD}"
+    data = to_bytes(raw, {BAD: b"\xff"})
+    assert b"\\ud800\xff" in data
+    alert = load_alert(data, fmt="wazuh")
+    assert alert.event["data.win.eventdata.commandLine"] == f"{MARKER}\ufffd\ufffd"
+    assert alert.ingest_warnings == [
+        "input: 1 invalid UTF-8 byte replaced with U+FFFD",
+        "input: 1 unpaired surrogate replaced with U+FFFD",
+    ]
+    assert_no_marker(alert)
+
+
+def test_str_input_with_lone_surrogate_accepted():
+    """A Python str holding a lone surrogate, which UTF-8 cannot encode, cannot crash ingestion."""
+    raw = base()
+    raw["data"]["win"]["eventdata"]["commandLine"] = f"{MARKER}\ud800"
+    text = json.dumps(raw, ensure_ascii=False)
+    with pytest.raises(UnicodeEncodeError):
+        text.encode("utf-8")
+    alert = load_alert(text, fmt="wazuh")
+    assert alert.event["data.win.eventdata.commandLine"] == f"{MARKER}\ufffd"
+    assert alert.ingest_warnings == ["input: 1 unpaired surrogate replaced with U+FFFD"]
+    assert_no_marker(alert)
+
+
+def test_surrogates_in_deeply_nested_lists_accepted_without_recursion_error():
+    """Surrogates inside lists nested 200 deep cannot crash the replacement step."""
+    value = [f"{MARKER}\udc80"]
+    for _ in range(199):
+        value = [value, "\ud800"]
+    raw = base()
+    raw["data"]["deep"] = value
+    alert = load(raw)
+    # Accepted: the depth rule counts objects only, and lists are stored as compact JSON text.
+    stored = alert.event["data.deep"]
+    assert stored.startswith("[" * 200 + f'"{MARKER}\ufffd"]')
+    assert stored.count("\ufffd") == 200
+    assert alert.ingest_warnings == ["input: 200 unpaired surrogates replaced with U+FFFD"]
+    assert_no_marker(alert)
+
+
+def test_invalid_byte_in_alert_id_still_rejected():
+    """Replacement does not relax the alert-ID pattern, and the error repeats no input text."""
+    raw = base()
+    raw["id"] = f"{MARKER}{BAD}"
+    with pytest.raises(IngestError, match="alert_id") as exc:
+        load_alert(to_bytes(raw, {BAD: b"\xff"}), fmt="wazuh")
+    assert MARKER not in str(exc.value)
+    assert "\ufffd" not in str(exc.value)
+
+
+def test_invalid_byte_outside_strings_still_invalid_json():
+    """An invalid byte outside any string is broken JSON and stays rejected."""
+    raw = base()
+    raw["data"]["win"]["eventdata"]["commandLine"] = MARKER
+    data = json.dumps(raw).encode("utf-8")
+    data = b"{\xff" + data[1:]
+    with pytest.raises(IngestError) as exc:
+        load_alert(data, fmt="wazuh")
+    assert str(exc.value) == "input: not valid JSON"
+
+
+def test_parse_warnings_come_first_and_survive_the_cap():
+    """Repair warnings cannot be pushed out of the capped warning list by later warnings."""
+    raw = base()
+    raw["rule"]["description"] = f"{MARKER}{BAD}" + "x" * 300
+    raw["rule"]["mitre"]["id"] = ["bad"] + [f"T{1000 + i}" for i in range(25)]
+    raw["agent"]["name"] = f"{MARKER} bad host"
+    raw["timestamp"] = "t" * 100
+    raw["data"]["vulnerability"] = {"cve": MARKER}
+    raw["data"]["win"]["eventdata"]["user"] = f"{MARKER}\ud800" * 30
+    raw["data"]["x" * 200] = MARKER
+    raw["data"]["deep"] = {"a": {"b": {"c": {"d": {"e": MARKER}}}}}
+    raw["data"]["win"]["eventdata"]["commandLine.x"] = MARKER
+    raw["data"]["win"]["eventdata"]["commandLine"] = {"x": MARKER}
+    raw["data"].update({f"f{i}": MARKER for i in range(60)})
+    data = to_bytes(raw, {BAD: b"\xff", '"id": "1782896400.1"': b'"id": "1782896400.1", "id": "second"'})
+    alert = load_alert(data, fmt="wazuh")
+    parse = [
+        "input: 1 invalid UTF-8 byte replaced with U+FFFD",
+        "input: 30 unpaired surrogates replaced with U+FFFD",
+        "input: 1 duplicate key dropped (first kept)",
+    ]
+    assert alert.ingest_warnings[:3] == parse
+    assert len(alert.ingest_warnings) == 3 + 11  # all eleven other Wazuh warning templates fire too
+    assert_no_marker(alert)
+    # Real input cannot yet raise more than 20 distinct warnings, so the cap is
+    # shown on the warning list itself: seeded first, then flooded.
+    w = _Warnings(parse)
+    for i in range(30):
+        w.add(f"field{i}: problem")
+    assert w.items[:3] == parse
+    assert len(w.items) == MAX_WARNINGS
+
+
+@pytest.mark.parametrize("path", sorted((REPO_ROOT / "samples" / "alerts").glob("*/*.json")),
+                         ids=lambda p: f"{p.parent.name}/{p.name}")
+def test_every_sample_loads_exactly_as_before(path):
+    """The repair step changes nothing for well-formed input."""
+    text = path.read_text(encoding="utf-8")
+    normalize = from_wazuh if path.parent.name == "wazuh" else from_sigma_match
+    assert load_alert(text, fmt=path.parent.name) == normalize(json.loads(text))
