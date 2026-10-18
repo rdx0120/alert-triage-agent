@@ -1,5 +1,6 @@
 """The agent loop: limits, tool dispatch, validation and stop reasons."""
 
+import dataclasses
 import json
 
 import pytest
@@ -104,6 +105,23 @@ def test_heuristic_survives_lone_surrogates(settings, tools):
     alert = alert.model_copy(update={"user": "bad\ud800user", "event": {**alert.event, "cmd": "x\udfffy"}})
     result = run_agent(alert, HeuristicBackend(), settings=settings, tools=tools)
     assert result.stop_reason == "completed"
+
+
+def test_heuristic_reports_every_gap_when_lookups_fail(settings, tools):
+    """With the most gaps enrichment can produce, the baseline still completes and reports each one."""
+    def unavailable(_):
+        raise OSError("snapshot unavailable")
+
+    failing = {**tools, "kev_epss_lookup": dataclasses.replace(tools["kev_epss_lookup"], func=unavailable)}
+    alert = Alert(alert_id="gaps-1", source="synthetic", rule_id="r-1", rule_title="Test rule",
+                  rule_level="medium", rule_tags=[f"attack.t99{i:02d}" for i in range(7)],
+                  host="CLINIC-LAB99", cves=[f"CVE-2024-{1000 + i}" for i in range(7)])
+    result = run_agent(alert, HeuristicBackend(), settings=settings, tools=failing)
+    gaps = result.enrichment.gaps
+    assert len(gaps) == 14 and result.enrichment.status == "degraded"
+    assert result.stop_reason == "completed"
+    assert [(m.kind, m.evidence_ids) for m in result.draft.missing_data] == \
+        [(g.kind, [g.evidence_id] if g.evidence_id else []) for g in gaps]
 
 
 # --- Phases and limits ---------------------------------------------------
@@ -227,6 +245,19 @@ def test_bad_arguments_are_invalid_input(arguments, settings, tools):
     result, _ = _run(_powershell(), replies, settings, tools)
     assert result.evidence[-1].status == "invalid_input"
     assert result.stop_reason == "completed"
+
+
+def test_extra_argument_names_are_not_echoed(settings, tools):
+    """An argument name the model copied from alert text does not come back in a tool message."""
+    replies = [_calls(("attack_lookup", {"technique_id": "T1003", MARKER: 1})), ChatReply(), ChatReply(text=VALID)]
+    result, backend = _run(_powershell(), replies, settings, tools)
+    assert result.evidence[-1].status == "invalid_input"
+    later = backend.requests[1:]
+    assert any(m["role"] == "tool" for m in later[0].messages)
+    for request in later:
+        for message in request.messages:
+            if message["role"] == "tool":
+                assert MARKER not in message["content"]
 
 
 # --- Final call and repair -----------------------------------------------

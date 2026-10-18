@@ -41,7 +41,9 @@ RESULT_STRING_TIERS = (512, 256, 128, 64)
 ARGUMENT_STRING_MAX_BYTES = 128
 TRUNCATION_MARKER = "...[truncated]"
 
-ERROR_STRING_MAX_BYTES = 128         # error text of a non-ok tool result
+# One control character becomes 7 bytes after double JSON escaping, so 120
+# keeps the worst error result within TOOL_RESULT_MAX_BYTES.
+ERROR_STRING_MAX_BYTES = 120         # error text of a non-ok tool result
 # Room kept in every packed section for its omission count.
 OMISSION_RESERVE_BYTES = 48
 
@@ -187,10 +189,12 @@ def _pack_list(section: dict, key: str, values: list, max_bytes: int, omitted_ke
 # --- Views -----------------------------------------------------------------
 
 def alert_metadata_view(alert: Alert) -> dict:
+    # Host and CVEs are validated and short, so they always fit; long tag and
+    # warning lists are what gets cut.
     items = [
         ("alert_id", alert.alert_id), ("source", alert.source), ("rule_id", alert.rule_id),
-        ("rule_level", alert.rule_level), ("rule_tags", alert.rule_tags), ("host", alert.host),
-        ("cves", alert.cves), ("ingest_warnings", alert.ingest_warnings),
+        ("rule_level", alert.rule_level), ("host", alert.host), ("cves", alert.cves),
+        ("rule_tags", alert.rule_tags), ("ingest_warnings", alert.ingest_warnings),
     ]
     return _pack([(k, cap_strings(v, METADATA_STRING_MAX_BYTES)) for k, v in items],
                  ALERT_METADATA_MAX_BYTES)

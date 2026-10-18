@@ -153,6 +153,10 @@ AlertField = Literal["rule_id", "rule_level", "rule_tags", "rule_title",
 
 EvidenceIdStr = Annotated[str, Field(pattern=EVIDENCE_ID_PATTERN)]
 
+# Must be at least the number of gaps enrichment can produce, so the rule-based
+# baseline can report every gap even when all lookups fail.
+MAX_MISSING_DATA = 16
+
 
 class DraftSources(Strict):
     """What a finding relies on: lookups from this run, alert fields, or both.
@@ -206,7 +210,7 @@ class ModelDraft(Strict):
     severity: DraftSeverity
     next_steps: list[DraftStep] = Field(max_length=8)
     containment: list[DraftContainment] = Field(max_length=5)
-    missing_data: list[DraftMissing] = Field(max_length=10)
+    missing_data: list[DraftMissing] = Field(max_length=MAX_MISSING_DATA)
 
 
 StopReason = Literal["completed", "budget_exceeded", "backend_error", "invalid_output"]

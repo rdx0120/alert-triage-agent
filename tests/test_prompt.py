@@ -89,6 +89,16 @@ def test_pack_keeps_order_counts_omissions_and_never_skips_ahead():
     assert wire_len(dumps(packed)) <= 100
 
 
+def test_host_and_cves_survive_long_tags_and_warnings():
+    """Long tag and warning lists are cut before the validated host and CVEs."""
+    alert = _alert(rule_id="\x01" * 128, rule_tags=["t" * 200] * 20, ingest_warnings=["w" * 200] * 20,
+                   host="CLINIC-FRONT01", cves=["CVE-2021-44228"])
+    view = prompt.alert_metadata_view(alert)
+    assert view["host"] == "CLINIC-FRONT01" and view["cves"] == ["CVE-2021-44228"]
+    assert view["_omitted"] >= 1
+    assert wire_len(dumps(view)) <= ALERT_METADATA_MAX_BYTES
+
+
 def test_event_packing_order_and_count():
     """The untrusted view stops at the first event field that does not fit and says how many are left."""
     big = "\x01" * 400      # 384 bytes after capping, each control character 7 bytes on the wire
@@ -158,16 +168,14 @@ def test_render_result_error_is_capped():
     assert "data" not in rendered
 
 
-def test_worst_non_ok_result_fits_tool_result_cap(tools):
+def test_worst_non_ok_result_fits_tool_result_cap():
     """A non-ok result has no tier fallback, so its worst case must fit by construction."""
-    # Extra argument names are echoed in the gateway's invalid_input error;
-    # control characters are the worst case for escaping.
-    result = registry.run_tool(tools, "runbook_search", {"\x01" * 300: 1})
-    assert result.status == "invalid_input"
-    longest_name = ToolResult(evidence_id="a" * 64 + ":0123456789abcdef", tool="a" * 64, args={},
-                              status="invalid_input", error=result.error)
-    for r in (result, longest_name):
-        assert wire_len(dumps(render_result(r, TOOL_RESULT_MAX_BYTES))) <= TOOL_RESULT_MAX_BYTES
+    # The gateway echoes no caller-chosen text, but a tool's own error message
+    # can be long; the longest tool name with an error of control characters
+    # (the worst case for escaping) is the largest a non-ok result can render.
+    worst = ToolResult(evidence_id="a" * 64 + ":0123456789abcdef", tool="a" * 64, args={},
+                       status="error", error="\x01" * 4096)
+    assert wire_len(dumps(render_result(worst, TOOL_RESULT_MAX_BYTES))) <= TOOL_RESULT_MAX_BYTES
 
 
 def test_render_result_never_contains_arguments(tools):

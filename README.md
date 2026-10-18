@@ -57,7 +57,7 @@ service.
 
 | Input | Trust | Handling |
 |---|---|---|
-| Alert fields (command lines, usernames, paths) | Untrusted | Validated and size-capped; strict patterns before reaching any lookup; marked as untrusted data in the prompt (planned). The model may still be influenced by this text, so the output is not trusted either |
+| Alert fields (command lines, usernames, paths) | Untrusted | Validated and size-capped; strict patterns before reaching any lookup; sent in a separate prompt section that the instructions describe as data; spotlighting (datamarking) is planned. The model may still be influenced by this text, so the output is not trusted either |
 | Local snapshots (ATT&CK, KEV/EPSS, assets, runbooks) | Trusted, versioned | Built offline by `scripts/`, with source version and hash recorded |
 | Model output | Untrusted | Schema-validated draft (`ModelDraft`); each finding cites evidence IDs or alert fields. Checking those citations against the run is planned |
 

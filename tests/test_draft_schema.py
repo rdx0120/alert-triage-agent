@@ -3,9 +3,10 @@
 import pytest
 from pydantic import ValidationError
 
+from triage.enrich import MAX_CVES, MAX_TECHNIQUES
 from triage.schemas import (
-    AgentResult, DraftContainment, DraftMissing, DraftSeverity, DraftStep, DraftTechnique,
-    Enrichment, ModelDraft,
+    MAX_MISSING_DATA, AgentResult, DraftContainment, DraftMissing, DraftSeverity, DraftStep,
+    DraftTechnique, Enrichment, ModelDraft,
 )
 
 EID = "attack_lookup:0123456789abcdef"
@@ -89,13 +90,20 @@ def test_string_caps(model, field, cap):
 @pytest.mark.parametrize("field, cap, item", [
     ("next_steps", 8, {"step": "s", "alert_fields": ["host"]}),
     ("containment", 5, {"action": "a", "alert_fields": ["host"]}),
-    ("missing_data", 10, {"kind": "other", "description": "d", "alert_fields": ["event"]}),
+    ("missing_data", MAX_MISSING_DATA, {"kind": "other", "description": "d", "alert_fields": ["event"]}),
 ])
 def test_list_caps(field, cap, item):
     """A model cannot flood the draft with findings."""
     ModelDraft.model_validate(_draft(**{field: [item] * cap}))
     with pytest.raises(ValidationError):
         ModelDraft.model_validate(_draft(**{field: [item] * (cap + 1)}))
+
+
+def test_missing_data_cap_covers_every_enrichment_gap():
+    """The rule-based baseline reports every gap, so the cap must hold the most enrichment can produce."""
+    # Techniques and CVEs: one gap per looked-up item plus one over_cap; one asset and one runbook gap.
+    most_gaps = (MAX_TECHNIQUES + 1) + 1 + (MAX_CVES + 1) + 1
+    assert most_gaps <= MAX_MISSING_DATA
 
 
 def test_source_list_caps():
