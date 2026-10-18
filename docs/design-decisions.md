@@ -253,3 +253,52 @@ from technique names alone can rank a related runbook first; enrichment returns
 up to 3 results, and retrieval quality is measured with
 `scripts/runbook_retrieval_report.py` rather than assumed. Enrichment collects
 facts only; severity decisions belong to the output controls.
+
+---
+
+## DD-013: One agent loop with fixed budgets; the model returns a draft, not a verdict
+
+**Context.** DD-008 puts every model behind one interface and adds a
+rule-based baseline. The model reads attacker-influenced alert text, so the
+number of model calls, the tools it can request and the size of what it is
+sent have to be bounded by code. When a prompt is longer than the context
+window, Ollama truncates it and records only a server-side warning, so a
+context limit that code does not enforce fails silently. The checks that make
+a model's findings trustworthy (citations, ATT&CK validation, a severity floor)
+belong to a later milestone.
+
+**Decision.** Our code runs one agent loop; each backend implements a single
+`chat()` call. A run has two phases: up to 4 investigation turns in which the
+model may request the four read-only tools through the run's evidence log (at
+most 6 tool calls, 3 per turn), then one final call without tools whose reply
+must match the `ModelDraft` schema, with one repair attempt. The final call
+and the repair are reserved within the limit of 6 model calls. Every request
+is measured in UTF-8 bytes exactly as serialized; counting at most one token
+per byte plus fixed template allowances, it must leave room for 1,024 output
+tokens in a 32,768-token context. Alert data, enrichment results, tool results
+and the model's tool calls enter the prompt as views with fixed byte caps, so
+a worst-case alert fits by construction; a test builds that case, and a
+runtime check stops an over-budget request before it is sent. Untrusted alert
+text has its own section, which the instructions describe as data. Each
+finding in the draft cites evidence IDs, the alert fields it relies on, or
+both, and the draft has no field that closes or dismisses an alert. Each
+evidence ID is recorded as coming from enrichment or from a model request. A
+run ends with one of four stop reasons (`completed`, `budget_exceeded`,
+`backend_error`, `invalid_output`); backend errors are not retried. The
+rule-based baseline is a backend: it requests no tools, takes the technique
+from enrichment and the severity from the rule level, and cites the alert
+fields and lookups it used. Tools still make no network calls; only a model
+backend reaches the model endpoint (DD-001, DD-009).
+
+**Consequences.** A model cannot make unbounded calls or tool requests, and
+alert text can neither push evidence out of the context window unnoticed nor
+get an alert refused for being too large. The byte bound is conservative, so
+the context size is larger than typical prompts need; it and the time limits
+(900 seconds per run, 300 per request) are starting values to be confirmed on
+the evaluation host. The model sees capped views: a long event field is
+truncated in the prompt, while the full event stays on the alert.
+Model-requested lookups can steer the draft, for example by retrieving a
+runbook's false-positive guidance out of context; the draft is unchecked model
+output until the output guardrails exist, and nothing at this stage treats it
+as a verdict. A single-call mode with no tool calls lets evaluation compare the
+model with and without investigation.
