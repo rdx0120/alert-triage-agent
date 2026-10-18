@@ -7,7 +7,7 @@ import pytest
 
 from triage import enrich as enrich_module
 from triage.config import REPO_ROOT, Settings
-from triage.enrich import MAX_CVES, MAX_TECHNIQUES, enrich
+from triage.enrich import MAX_CVES, MAX_REPLACEMENT_HOPS, MAX_TECHNIQUES, enrich
 from triage.evidence import EvidenceLog
 from triage.ingest import load_alert
 from triage.schemas import Alert, Gap, TechniqueResolution
@@ -197,3 +197,44 @@ def test_tags_resolving_to_the_same_technique_kept_once(run):
     t1685 = evidence_id("attack_lookup", {"technique_id": "T1685"})
     assert all(r.evidence_ids[1] == t1685 for r in e.resolutions)
     assert e.runbook_query == "T1685 Disable or Modify Tools"
+
+
+def test_retired_replacement_chain_followed_to_current_technique(run):
+    # T1073 -> T1574.002 (itself retired) -> T1574.001.
+    e, _ = run(synthetic(rule_tags=["attack.t1073"]))
+    attack = by_tool(e, "attack_lookup")
+    assert [r.args["technique_id"] for r in attack] == ["T1073", "T1574.002", "T1574.001"]
+    assert e.techniques == ["T1574.001"]
+    assert e.resolutions == [TechniqueResolution(requested="T1073", resolved="T1574.001",
+                                                 evidence_ids=[r.evidence_id for r in attack])]
+    assert e.status == "complete"
+    assert e.runbook_query.startswith("T1574.001 ")
+
+
+def test_retired_chain_t1150_resolves(run):
+    # T1150 -> T1547.011 (itself retired) -> T1647.
+    e, _ = run(synthetic(rule_tags=["attack.t1150"]))
+    assert e.techniques == ["T1647"]
+
+
+def test_replacement_cycle_terminates_as_not_found(run, monkeypatch):
+    cycle = {"T9901": "T9902", "T9902": "T9901"}
+    monkeypatch.setattr(enrich_module, "replacement_for", lambda _path, tid: cycle.get(tid))
+    e, _ = run(synthetic(rule_tags=["attack.t9901"]))
+    attack = by_tool(e, "attack_lookup")
+    assert all(r.status == "not_found" for r in attack)
+    assert len(attack) - 1 <= 2
+    assert [g for g in e.gaps if g.kind == "technique"] == [
+        Gap(kind="technique", reason="not_found", evidence_id=attack[-1].evidence_id)]
+    assert e.techniques == [] and e.resolutions == []
+
+
+def test_replacement_chain_stops_at_hop_cap(run, monkeypatch):
+    chain = {"T9901": "T9902", "T9902": "T9903", "T9903": "T9904", "T9904": "T9905"}
+    monkeypatch.setattr(enrich_module, "replacement_for", lambda _path, tid: chain.get(tid))
+    e, _ = run(synthetic(rule_tags=["attack.t9901"]))
+    attack = by_tool(e, "attack_lookup")
+    assert len(attack) - 1 == MAX_REPLACEMENT_HOPS == 3
+    assert [r.args["technique_id"] for r in attack] == ["T9901", "T9902", "T9903", "T9904"]
+    assert [g for g in e.gaps if g.kind == "technique"] == [
+        Gap(kind="technique", reason="not_found", evidence_id=attack[-1].evidence_id)]

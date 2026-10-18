@@ -27,6 +27,7 @@ from .tools.attack import replacement_for
 MAX_TECHNIQUES = 5
 MAX_CVES = 5
 MAX_RUNBOOK_TECHNIQUES = 3
+MAX_REPLACEMENT_HOPS = 3
 RUNBOOK_TOP_K = 3
 
 _GAP_REASON = {"not_found": "not_found", "error": "lookup_failed", "invalid_input": "invalid_input"}
@@ -51,21 +52,31 @@ def enrich(alert: Alert, log: EvidenceLog, settings: Settings | None = None) -> 
         gaps.append(Gap(kind="technique", reason="not_on_alert"))
     for tid in tags[:MAX_TECHNIQUES]:
         result = log.call("attack_lookup", {"technique_id": tid})
+        chain = [result]
+        resolved_id = tid
+        seen = {tid}
+        # A revoked or deprecated ID: follow what ATT&CK replaced it with, since
+        # a replacement can itself be retired (T1073 -> T1574.002 -> T1574.001).
+        # Every lookup in the chain is kept as evidence. The chain stops at a
+        # repeated ID or after MAX_REPLACEMENT_HOPS lookups, so bad snapshot
+        # data cannot loop or fan out.
+        while (result.status == "not_found" and len(chain) <= MAX_REPLACEMENT_HOPS
+               and (replacement := replacement_for(attack_path, resolved_id))
+               and replacement not in seen):
+            seen.add(replacement)
+            resolved_id = replacement
+            result = log.call("attack_lookup", {"technique_id": resolved_id})
+            chain.append(result)
         current: tuple[str, ToolResult] | None = None
         if result.status == "ok":
-            current = (tid, result)
-        elif result.status == "not_found" and (replacement := replacement_for(attack_path, tid)):
-            # A revoked or deprecated ID: look up what ATT&CK replaced it with,
-            # and keep both lookups as evidence.
-            replaced = log.call("attack_lookup", {"technique_id": replacement})
-            if replaced.status == "ok":
-                current = (replacement, replaced)
+            current = (resolved_id, result)
+            if len(chain) > 1:
                 resolutions.append(TechniqueResolution(
-                    requested=tid, resolved=replacement,
-                    evidence_ids=[result.evidence_id, replaced.evidence_id]))
-            else:
-                gaps.append(_gap("technique", replaced))
+                    requested=tid, resolved=resolved_id,
+                    evidence_ids=[r.evidence_id for r in chain]))
         else:
+            # Includes a cycle or an exhausted hop budget: the last lookup was
+            # not_found, so the gap is not_found and cites that lookup.
             gaps.append(_gap("technique", result))
         # Two tags can resolve to the same current ID; keep it once.
         if current is not None and current[0] not in names:

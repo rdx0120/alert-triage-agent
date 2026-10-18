@@ -1,8 +1,12 @@
 """EvidenceLog: records every gateway result once, in call order, keyed by evidence ID."""
 
+import re
+
+import pytest
 from pydantic import BaseModel, ConfigDict
 
-from triage.evidence import EvidenceLog
+from triage.evidence import EvidenceCollisionError, EvidenceLog
+from triage.tools import registry
 from triage.tools.registry import Tool, evidence_id
 
 
@@ -66,3 +70,41 @@ def test_ids_and_get_reflect_recorded_results():
     assert log.get(a.evidence_id) == a
     assert log.get(bad.evidence_id) == bad
     assert log.get("echo:00000000") is None
+
+
+def test_evidence_id_carries_64_bits():
+    """A short ID could be matched by brute force with a crafted argument."""
+    assert re.fullmatch(r"echo:[0-9a-f]{16}", evidence_id("echo", {"value": "a"}))
+
+
+def test_identical_calls_still_deduplicated():
+    """Dedup on the exact call must not make a repeated lookup run twice."""
+    tools, calls = counting_tools()
+    log = EvidenceLog(tools)
+    assert log.call("echo", {"value": "a"}) == log.call("echo", {"value": "a"})
+    assert calls == ["a"]
+
+
+def test_colliding_id_for_a_different_call_fails_closed(monkeypatch):
+    """A crafted argument sharing a real lookup's ID must not be served its result."""
+    monkeypatch.setattr(registry, "evidence_id", lambda tool, args: f"{tool}:0000000000000000")
+    tools, _ = counting_tools()
+    log = EvidenceLog(tools)
+    first = log.call("echo", {"value": "real-host"})
+    with pytest.raises(EvidenceCollisionError) as excinfo:
+        log.call("echo", {"value": "crafted-host"})
+    assert "real-host" not in str(excinfo.value)
+    assert "crafted-host" not in str(excinfo.value)
+    assert log.results == [first]
+    assert log.get(first.evidence_id) == first
+    assert first.data == {"value": "real-host"}
+
+
+def test_same_call_under_a_constant_id_is_not_a_collision(monkeypatch):
+    """Repeating one lookup is not a collision, even when IDs are forced equal."""
+    monkeypatch.setattr(registry, "evidence_id", lambda tool, args: f"{tool}:0000000000000000")
+    tools, _ = counting_tools()
+    log = EvidenceLog(tools)
+    first = log.call("echo", {"value": "a"})
+    assert log.call("echo", {"value": "a"}) == first
+    assert log.results == [first]

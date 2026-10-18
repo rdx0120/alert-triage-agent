@@ -234,13 +234,16 @@ has a valid host, up to 5 CVEs from the scanner field, and one runbook search
 returning up to 3 results. Lookup arguments come only from rule metadata and
 allow-listed identifiers. The runbook query is built from the ATT&CK lookup
 results (ID and technique name), never from alert text. A retired technique is
-resolved to its recorded replacement, and both lookups are kept as evidence.
-Every result goes into one evidence log per triage run, keyed by the
-deterministic evidence ID. Anything that could not be determined is recorded
-as a gap with a fixed kind and reason (not on the alert, not found, over the
-cap, lookup failed, invalid input) and the evidence ID it came from. A failed
-lookup marks the enrichment `degraded`; "not found", such as a host missing
-from the inventory, is a finding and leaves it `complete`.
+resolved by following its recorded replacements (up to 3 steps), and every
+lookup in the chain is kept as evidence. Every result goes into one evidence
+log per triage run. Evidence IDs are deterministic and carry 64 bits of
+SHA-256; the log de-duplicates on the exact tool and arguments, and an ID that
+would identify two different lookups raises an error instead of being shared.
+Anything that could not be determined is recorded as a gap with a fixed kind
+and reason (not on the alert, not found, over the cap, lookup failed, invalid
+input) and the evidence ID it came from. A failed lookup marks the enrichment
+`degraded`; "not found", such as a host missing from the inventory, is a
+finding and leaves it `complete`.
 
 **Consequences.** The same alert always produces the same evidence, so
 evaluation runs are reproducible and later output checks have a fixed set of
