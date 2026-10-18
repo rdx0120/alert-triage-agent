@@ -48,3 +48,8 @@ def make_attack_lookup(path: Path):
 def is_valid_technique(path: Path, technique_id: str) -> bool:
     """Allow-list check for technique IDs the model puts in its output."""
     return technique_id.upper() in load_attack(path)["techniques"]
+
+
+def replacement_for(path: Path, technique_id: str) -> str | None:
+    """Replacement ID recorded for a revoked/deprecated technique, else None."""
+    return load_attack(path)["retired"].get(technique_id.upper())

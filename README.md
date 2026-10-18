@@ -12,9 +12,10 @@ call passes through a validating gateway, and empty or failed lookups are
 reported as missing data instead of being filled in.
 
 > **Status:** early development. The data layer, the tool gateway, the four
-> read-only tools and alert ingestion are implemented and tested. The agent
-> loop, output guardrails, the service and evaluation are planned; see
-> [Roadmap](#roadmap). No evaluation results are published yet.
+> read-only tools, alert ingestion and deterministic enrichment are
+> implemented and tested. The agent loop, output guardrails, the service and
+> evaluation are planned; see [Roadmap](#roadmap). No evaluation results are
+> published yet.
 
 **Scope.** Lab project. All alerts, hosts and inventory data are synthetic;
 threat-intelligence data comes from public sources. It is not a production
@@ -31,8 +32,8 @@ service.
  └─────────────┬───────────────┘
                ▼
  ┌─────────────────────────────┐
- │ deterministic enrichment    │  rule tags → ATT&CK, host → asset,         [planned]
- │ (code, before any model)    │  CVEs → KEV/EPSS
+ │ deterministic enrichment    │  rule tags → ATT&CK, host → asset,         [implemented]
+ │ (code, before any model)    │  CVEs → KEV/EPSS, techniques → runbooks
  └─────────────┬───────────────┘
                ▼
  ┌─────────────────────────────┐      ┌──────────────────────────────────┐
@@ -73,6 +74,8 @@ service.
 | Techniques and CVEs read only from rule metadata and scanner fields, never from event text | Attacker text steering severity or lookups | Implemented |
 | Hostname and alert-ID allow-list patterns; ingestion problems reported as `ingest_warnings` | Injected identifiers; silently dropped fields | Implemented |
 | Revoked ATT&CK IDs resolved to their replacement | Stale technique mappings | Implemented |
+| Enrichment lookups take arguments only from rule metadata and allow-listed identifiers; the runbook query is built from ATT&CK data, never alert text | Attacker text choosing lookups or retrieved guidance | Implemented |
+| "Not found" recorded as a gap; a failed lookup marks the enrichment degraded | Broken lookups read as "nothing found" | Implemented |
 | Runbook retrieval with a minimum similarity score | Irrelevant context presented as guidance | Implemented |
 | Spotlighting (datamarking) of alert fields | Indirect prompt injection | Planned |
 | Injection tripwire raising severity | Alerts that address the model | Planned |
@@ -91,6 +94,7 @@ A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
 | Schemas | `triage/schemas.py` | `Alert`, `ToolResult`, `TriageSummary`; unknown fields rejected |
 | Ingestion | `triage/ingest.py` | Wazuh 4.x and Sigma-match normalizers; explicit format; rejects alerts without rule metadata |
 | Sample alerts | `samples/alerts/` | Synthetic Wazuh and Sigma inputs; Sigma samples generated from the vendored rule fixtures |
+| Enrichment | `triage/enrich.py`, `triage/evidence.py` | Deterministic lookups before the model; shared evidence log; explicit gaps; `complete` / `degraded` status |
 | Tool gateway | `triage/tools/registry.py` | Allow-list, argument validation, error handling, deterministic evidence IDs |
 | `attack_lookup` | `triage/tools/attack.py` | ATT&CK Enterprise v20.0; retired IDs return their replacement |
 | `kev_epss_lookup` | `triage/tools/kev_epss.py` | CISA KEV membership and FIRST EPSS score; missing EPSS reported as unknown |
@@ -147,7 +151,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 |---|---|---|
 | Data and tools | Schemas, versioned snapshots, four read-only tools, tool gateway | Implemented |
 | Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
-| Deterministic enrichment | Code-driven lookups before the model runs | Planned |
+| Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
 | Agent loop and model backends | Rule-based baseline, Ollama (local), Claude API (optional); step and tool-call caps; audit log | Planned |
 | Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Spotlighting, injection tripwire, severity floors, output evidence and ATT&CK validation, and summary-level fail-closed statuses are planned | Partial |
 | Service and packaging | FastAPI `POST /triage`, CLI, Docker, GitHub Actions CI with security scanning | Planned |
