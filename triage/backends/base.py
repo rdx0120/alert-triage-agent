@@ -57,6 +57,9 @@ class BackendError(Exception):
 
 
 class Backend(Protocol):
+    """A backend must return or raise within request.timeout_s; the loop cannot
+    interrupt a backend that ignores it."""
+
     name: str
 
     def chat(self, request: ChatRequest) -> ChatReply: ...

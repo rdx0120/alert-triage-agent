@@ -307,3 +307,46 @@ runbook's false-positive guidance out of context; the draft is unchecked model
 output until the output guardrails exist, and nothing at this stage treats it
 as a verdict. A single-call mode with no tool calls lets evaluation compare the
 model with and without investigation.
+
+---
+
+## DD-014: The Ollama adapter is a thin, fail-closed HTTP client with hard deadlines
+
+**Context.** The local model is reached over HTTP on a private network
+(DD-009). The adapter is the only code that makes a network call at triage
+time, so it decides what leaves the process and what is accepted back. A socket
+timeout bounds each wait for data, not a whole request: a server that keeps
+sending a byte at a time, or a name lookup that hangs, could hold a request far
+past its limit, and the agent run's limit was checked only between model calls.
+
+**Decision.** The adapter uses Python's `http.client`, which has no proxy or
+redirect handling, and verifies TLS for `https`. The endpoint must be an `http`
+or `https` URL with a host and no credentials, path, query or fragment; any
+such host is accepted, so alert data goes wherever `OLLAMA_HOST` points.
+Requests carry the messages, tool specs and schema that the context budget
+measured, with fixed options: the context and output sizes from DD-013,
+temperature 0 and a fixed seed. Each request runs in a worker thread that
+keeps the connection's socket from the moment it connects; the caller waits no
+longer than the request's deadline, then shuts that socket down, which also
+wakes a read blocked on the response body, and reports a backend error. No
+more than 2 request workers exist at once; when both are held by requests that
+timed out, a new request fails at once instead of starting another. A
+request's deadline is the smaller of 300 seconds and the time left in the run,
+and the loop checks the run deadline again after every call, so a call that
+ends after it stops the run as `budget_exceeded`. A status other than 200, a
+reply over 1 MiB, or a reply that is not the expected JSON is a backend error
+with a fixed message. Reply bodies are never stored or logged, and errors are
+not retried.
+
+**Consequences.** A call to the adapter returns within its deadline whatever
+the server does, and unfinished workers cannot accumulate. A worker blocked on
+its connection ends as soon as the socket is shut down, but not every worker
+is guaranteed to end promptly: one blocked in a name lookup ends when the
+system resolver gives up, and while 2 are pending the adapter refuses new
+requests, which the run reports as a backend error. The run limit holds for
+backends that honour their deadline, as both current backends do; the loop
+cannot interrupt a backend that ignores it and can only classify its late
+return as `budget_exceeded`. A model that reaches its output limit returns
+truncated text, which then fails validation. The model and its options are
+chosen on the evaluation host, where the live smoke test also checks that the
+prompt token count Ollama reports never exceeds the byte-based bound.

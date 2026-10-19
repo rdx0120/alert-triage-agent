@@ -411,3 +411,58 @@ def test_lowered_limits():
     assert Limits(max_model_calls=3).max_investigation_turns == 1
     assert Limits(max_model_calls=2).max_investigation_turns == 0
     assert Limits(max_tool_calls=0).max_investigation_turns == 0
+
+
+class FakeClock:
+    def __init__(self, now=0.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+class ClockBackend:
+    """Moves the fake clock to a set time during the call, then returns or raises the reply."""
+
+    name = "clock"
+
+    def __init__(self, clock, at, reply):
+        self.clock, self.at, self.reply = clock, at, reply
+        self.requests = []
+
+    def chat(self, request):
+        self.requests.append(request)
+        self.clock.now = self.at
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+
+@pytest.mark.parametrize("elapsed,timeout", [(0.0, 300.0), (700.0, 200.0)])
+def test_request_timeout_within_run(elapsed, timeout, settings, tools):
+    """A request never gets more time than is left in the run."""
+    times = [0.0]
+    clock = lambda: times.pop(0) if times else elapsed  # noqa: E731
+    result, backend = _run(_powershell(), [ChatReply(), ChatReply(text=VALID)], settings, tools, clock=clock)
+    assert result.stop_reason == "completed"
+    assert [r.timeout_s for r in backend.requests] == [timeout, timeout]
+
+
+def test_reply_after_run_deadline_is_discarded(settings, tools):
+    """A call that ends after the run deadline stops the run, even with a valid draft."""
+    clock = FakeClock()
+    backend = ClockBackend(clock, 901.0, ChatReply(text=VALID))
+    result = run_agent(_powershell(), backend, settings=settings, tools=tools,
+                       limits=Limits(max_tool_calls=0), clock=clock)
+    assert result.stop_reason == "budget_exceeded" and result.draft is None
+    assert len(backend.requests) == 1
+
+
+@pytest.mark.parametrize("at,reason", [(901.0, "budget_exceeded"), (899.0, "backend_error")])
+def test_backend_error_after_run_deadline(at, reason, settings, tools):
+    """A backend error after the run deadline is the run running out of time; before it, a backend failure."""
+    clock = FakeClock()
+    backend = ClockBackend(clock, at, BackendError(MARKER))
+    result = run_agent(_powershell(), backend, settings=settings, tools=tools, clock=clock)
+    assert result.stop_reason == reason and result.draft is None
+    assert len(backend.requests) == 1
