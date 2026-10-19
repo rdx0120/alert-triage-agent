@@ -649,6 +649,24 @@ def test_abort_before_attach_sends_nothing(serve):
     assert server.requests == 0
 
 
+def test_abort_before_attach_closes_owned_descriptor(serve):
+    """A request cancelled before its socket is attached still has its owned descriptor closed."""
+    server = serve(lambda s, conn: None)
+    fds = "/proc/self/fd"
+    before = len(os.listdir(fds)) if os.path.isdir(fds) else None
+    exchange = Exchange()
+    exchange.abort()
+    with pytest.raises(ollama._Aborted):
+        _http_transport(Endpoint("http", "127.0.0.1", server.port), b"{}", 1.0, exchange)
+    # These two do not depend on garbage collection, unlike the count below.
+    assert exchange.sock is not None and exchange.sock.fileno() == -1
+    assert exchange.released is True
+    assert _wait_until(lambda: server.connections_done == 1, 2.0)
+    assert server.requests == 0
+    if before is not None:
+        assert len(os.listdir(fds)) == before
+
+
 def test_abort_after_release_does_not_shut_down():
     """Once the worker has closed its socket, abort cannot touch a descriptor that may be reused."""
     sock, resp, conn = RecordingSocket(), RecordingSocket(), RecordingSocket()
