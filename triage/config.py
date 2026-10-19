@@ -22,6 +22,13 @@ class Settings:
     # "minilm" = sentence-transformers all-MiniLM-L6-v2 (real retrieval)
     # "hashing" = offline bag-of-words hashing (tests/CI, no model download)
     embedder: str = field(default_factory=lambda: os.environ.get("TRIAGE_EMBEDDER", "minilm"))
+    # "heuristic" = the rule-based baseline; "ollama" = a local model over HTTP
+    backend: str = field(default_factory=lambda: os.environ.get("TRIAGE_BACKEND", "heuristic"))
+    ollama_host: str = field(default_factory=lambda: os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
+    # No default model: the evaluation host chooses it.
+    ollama_model: str = field(default_factory=lambda: os.environ.get("OLLAMA_MODEL", ""))
+    # "" = not sent (the model's own default), "true" or "false"
+    ollama_think: str = field(default_factory=lambda: os.environ.get("OLLAMA_THINK", ""))
 
 
 def get_settings() -> Settings:

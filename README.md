@@ -12,10 +12,12 @@ call passes through a validating gateway, and empty or failed lookups are
 reported as missing data instead of being filled in.
 
 > **Status:** early development. The data layer, the tool gateway, the four
-> read-only tools, alert ingestion, deterministic enrichment and the agent
-> loop with a rule-based baseline backend are implemented and tested. The
-> local-model backend, output guardrails, the service and evaluation are
-> planned; see [Roadmap](#roadmap). No evaluation results are published yet.
+> read-only tools, alert ingestion, deterministic enrichment, the agent loop
+> and the rule-based baseline backend are implemented and tested. An Ollama
+> backend for local models is implemented and tested against a simulated
+> server; it has not yet been run against a model. Output guardrails, the
+> service and evaluation are planned; see [Roadmap](#roadmap). No evaluation
+> results are published yet.
 
 **Scope.** Lab project. All alerts, hosts and inventory data are synthetic;
 threat-intelligence data comes from public sources. It is not a production
@@ -84,6 +86,8 @@ service.
 | Evidence-ID citation check; ATT&CK ID allow-list on output | Hallucinated findings | Planned |
 | Model-call, tool-call and time limits; prompts bounded in bytes so they fit the context window, with output space reserved | Unbounded consumption; silent context truncation | Implemented |
 | Model-requested lookups recorded separately from enrichment | Untraceable model-steered evidence | Implemented |
+| Model endpoint must be an `http(s)` URL without credentials, path or query; no proxy or redirect handling; TLS verified | Alert data sent somewhere unintended | Implemented |
+| Hard per-request deadline (never more than the time left in the run), bounded worker threads, 1 MiB reply cap; malformed replies are backend errors | Hung or hostile model endpoint | Implemented |
 | JSONL audit log of every tool call and model response (OpenTelemetry GenAI field names) | Lack of accountability | Planned |
 
 A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
@@ -98,7 +102,7 @@ A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
 | Sample alerts | `samples/alerts/` | Synthetic Wazuh and Sigma inputs; Sigma samples generated from the vendored rule fixtures |
 | Enrichment | `triage/enrich.py`, `triage/evidence.py` | Deterministic lookups before the model; shared evidence log; explicit gaps; `complete` / `degraded` status |
 | Agent loop | `triage/agent.py`, `triage/prompt.py` | Two phases (investigation with capped tool calls, then a schema-constrained draft); byte budgets; fixed stop reasons |
-| Model backends | `triage/backends/` | One `chat()` interface; rule-based baseline implemented; Ollama planned |
+| Model backends | `triage/backends/` | One `chat()` interface; rule-based baseline; Ollama over `http.client` with hard deadlines (not yet run against a model) |
 | Tool gateway | `triage/tools/registry.py` | Allow-list, argument validation, error handling, deterministic evidence IDs |
 | `attack_lookup` | `triage/tools/attack.py` | ATT&CK Enterprise v20.0; retired IDs return their replacement |
 | `kev_epss_lookup` | `triage/tools/kev_epss.py` | CISA KEV membership and FIRST EPSS score; missing EPSS reported as unknown |
@@ -137,7 +141,14 @@ with their defaults.
 ```bash
 python -m pytest              # offline suite; uses a deterministic hashing embedder
 python -m pytest -m slow      # retrieval tests with the real embedding model (~90 MB download)
+python -m pytest -m ollama -s # live smoke test; needs OLLAMA_MODEL (and OLLAMA_HOST if not local)
 ```
+
+The live test runs every sample alert against the configured model and
+checks only that each run ends with a recorded stop reason and that the
+prompt tokens Ollama reports stay within the byte-based bound. Run it on
+the host that serves the model, against `http://localhost:11434`
+(DD-009).
 
 `python -m pytest` runs the tests with the interpreter the project is
 installed in, which avoids picking up a different `pytest` on `PATH`.
@@ -156,7 +167,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Data and tools | Schemas, versioned snapshots, four read-only tools, tool gateway | Implemented |
 | Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
-| Agent loop and model backends | Agent loop, limits and the rule-based baseline are implemented. Ollama (local), Claude API (optional) and the audit log are planned | Partial |
+| Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. Claude API (optional) and the audit log are planned | Partial |
 | Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Spotlighting, injection tripwire, severity floors, output evidence and ATT&CK validation, and summary-level fail-closed statuses are planned | Partial |
 | Service and packaging | FastAPI `POST /triage`, CLI, Docker, GitHub Actions CI with security scanning | Planned |
 | Evaluation and threat model | Labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, published results | Planned |

@@ -117,13 +117,16 @@ def run_agent(alert: Alert, backend: Backend, *, settings: Settings | None = Non
     validation_errors: list[str] = []
 
     def chat(phase: ModelPhase, specs: list[dict] | None, schema: dict | None) -> ChatReply:
+        # A request gets no more than the time left in the run, and a call that
+        # ends after the run deadline stops the run, whatever it returned.
+        remaining = limits.run_timeout_s - (clock() - start)
         request = ChatRequest(
             messages=list(messages), tools=specs, response_schema=schema,
             max_output_tokens=MAX_OUTPUT_TOKENS, context_tokens=CONTEXT_TOKENS,
-            timeout_s=limits.request_timeout_s, alert=alert, enrichment=enrichment)
+            timeout_s=min(limits.request_timeout_s, remaining), alert=alert, enrichment=enrichment)
         # Preflight: never send a request after the deadline or one that would
         # not fit; Ollama would truncate it with only a server-side warning.
-        if clock() - start >= limits.run_timeout_s or not fits(request):
+        if remaining <= 0 or not fits(request):
             raise _Stop("budget_exceeded")
         record = ModelCallRecord(phase=phase, request_bytes=len(serialize_request(request)),
                                  token_bound=token_bound(request), input_tokens=None, output_tokens=None)
@@ -132,8 +135,11 @@ def run_agent(alert: Alert, backend: Backend, *, settings: Settings | None = Non
             reply = backend.chat(request)
         except BackendError:
             # Recorded as a stop reason only; the message is not kept. No retry.
-            raise _Stop("backend_error") from None
+            late = clock() - start >= limits.run_timeout_s
+            raise _Stop("budget_exceeded" if late else "backend_error") from None
         record.input_tokens, record.output_tokens = reply.input_tokens, reply.output_tokens
+        if clock() - start >= limits.run_timeout_s:
+            raise _Stop("budget_exceeded")  # the reply is discarded
         return reply
 
     def result(stop_reason: StopReason, draft: ModelDraft | None = None) -> AgentResult:
