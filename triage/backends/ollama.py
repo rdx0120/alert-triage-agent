@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import re
 import socket
 import ssl
@@ -71,18 +72,16 @@ class Exchange:
 
     def attach(self, sock: socket.socket) -> bool:
         with self._lock:
-            if self.aborted:
-                return False
             self.sock = sock
-            return True
+            return not self.aborted
 
     def abort(self) -> None:
-        # With Connection: close, http.client sets conn.sock to None once
-        # headers are read, but the socket saved at connect time still reaches
-        # the open file descriptor, so shutdown() wakes a read blocked on the
-        # body (on Linux close() alone does not reliably wake it). The worker
-        # owns the socket and is the only one that closes it, under the lock,
-        # so abort can never shut down a reused descriptor.
+        # The saved socket is a duplicate descriptor owned by the exchange;
+        # http.client closes its own socket once the body is read, but the
+        # duplicate stays open until release() closes it under the lock, so
+        # abort never shuts down a descriptor that has been closed or reused.
+        # shutdown() acts on the connection, so it wakes a blocked read
+        # whichever descriptor it is called on.
         with self._lock:
             self.aborted = True
             if self.sock is not None and not self.released:
@@ -122,7 +121,8 @@ def _http_transport(endpoint: Endpoint, body: bytes, timeout_s: float, exchange:
         # Name lookup, TCP and, for https, the TLS handshake; all within
         # timeout_s except the name lookup.
         conn.connect()
-        if not exchange.attach(conn.sock):
+        saved = socket.socket(fileno=os.dup(conn.sock.fileno()))
+        if not exchange.attach(saved):
             raise _Aborted
         conn.request("POST", CHAT_PATH, body=body, headers={
             "Content-Type": "application/json", "Accept": "application/json", "Connection": "close"})
@@ -238,7 +238,15 @@ class OllamaBackend:
                 raise BackendError("ollama: earlier requests still pending")
             worker = threading.Thread(target=work, name="ollama-request", daemon=True)
             _live_workers.add(worker)
-        worker.start()
+        try:
+            worker.start()
+        except BaseException as e:
+            # The slot is freed here because a thread that never started cannot free it.
+            with _live_lock:
+                _live_workers.discard(worker)
+            if isinstance(e, Exception):
+                raise BackendError("ollama: could not start a request worker") from None
+            raise
         worker.join(request.timeout_s)
         if worker.is_alive():
             exchange.abort()

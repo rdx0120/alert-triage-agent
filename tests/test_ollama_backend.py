@@ -4,6 +4,7 @@ import ast
 import dataclasses
 import http.client
 import json
+import os
 import shutil
 import socket
 import ssl
@@ -376,6 +377,34 @@ def test_repeated_timeouts_do_not_accumulate_workers(release, investigate_reques
     assert backend.chat(request).text == ""
 
 
+def _unstartable(error):
+    class UnstartableThread(threading.Thread):
+        def start(self):
+            raise error
+    return UnstartableThread
+
+
+def test_failed_thread_start_frees_slot(monkeypatch, investigate_request):
+    """A worker that fails to start does not keep its slot and block every later request."""
+    backend, _ = _backend(_reply())
+    with monkeypatch.context() as m:
+        m.setattr(ollama.threading, "Thread", _unstartable(RuntimeError("can't start new thread")))
+        for _ in range(3):
+            with pytest.raises(BackendError, match="^ollama: could not start a request worker$"):
+                backend.chat(investigate_request)
+            assert live_workers() == 0
+    assert backend.chat(investigate_request).text == ""
+
+
+def test_interrupted_thread_start_frees_slot(monkeypatch, investigate_request):
+    """A KeyboardInterrupt during start propagates unchanged and does not keep the slot."""
+    backend, _ = _backend(_reply())
+    monkeypatch.setattr(ollama.threading, "Thread", _unstartable(KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt):
+        backend.chat(investigate_request)
+    assert live_workers() == 0
+
+
 # --- Real http.client over loopback --------------------------------------
 
 def _read_request(conn):
@@ -637,6 +666,52 @@ def test_abort_never_closes():
     exchange.attach(sock)
     exchange.abort()
     assert sock.calls == ["shutdown"]
+
+
+class RecordingExchange(Exchange):
+    """Records the saved socket's descriptor at the moment release() starts."""
+
+    def release(self, resp, conn):
+        self.fileno_at_release = self.sock.fileno()
+        super().release(resp, conn)
+
+
+def _complete_exchange(serve):
+    server = serve(lambda s, conn: conn.sendall(_ok_response(_reply(VALID)[1])))
+    exchange = RecordingExchange()
+    status, _ = _http_transport(Endpoint("http", "127.0.0.1", server.port), b"{}", 2.0, exchange)
+    assert status == 200
+    return exchange
+
+
+def test_saved_socket_open_until_release(serve):
+    """http.client closing its socket after the body cannot close the descriptor abort may still use."""
+    exchange = _complete_exchange(serve)
+    assert exchange.fileno_at_release != -1
+    assert exchange.sock.fileno() == -1
+
+
+def test_abort_after_completed_exchange(serve):
+    """An abort that arrives after a completed exchange raises nothing."""
+    _complete_exchange(serve).abort()
+
+
+def test_no_descriptor_leak(serve, final_request, investigate_request):
+    """Duplicated descriptors are closed after successful requests and after deadline timeouts alike."""
+    if not os.path.isdir("/proc/self/fd"):
+        pytest.skip("/proc/self/fd is needed to count open descriptors")
+    ok = serve(lambda s, conn: conn.sendall(_ok_response(_reply(VALID)[1])))
+    silent = serve(_silent)
+    timed = dataclasses.replace(investigate_request, timeout_s=0.2)
+    before = len(os.listdir("/proc/self/fd"))
+    for _ in range(20):
+        assert _loopback(ok).chat(final_request).text == VALID
+    for _ in range(5):
+        message, _ = _timed_chat(_loopback(silent), timed)
+        assert message == "ollama: request deadline exceeded"
+        assert _wait_until(lambda: live_workers() == 0, 1.0)
+    assert _wait_until(lambda: ok.connections_done == 20 and silent.connections_done == 5, 2.0)
+    assert len(os.listdir("/proc/self/fd")) == before
 
 
 # --- Integration with the agent loop -------------------------------------
