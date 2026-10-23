@@ -34,7 +34,7 @@ HOST = "http://localhost:11434"
 MODEL = "example-model:7b"
 MARKER = "ZQXMARKER7731"
 POWERSHELL = REPO_ROOT / "samples" / "alerts" / "wazuh" / "encoded_powershell.json"
-VALID = ModelDraft(severity=DraftSeverity(value="high", rationale="r", alert_fields=["rule_level"]),
+VALID = ModelDraft(severity=DraftSeverity(value="high", rationale="r", sources=["rule_level"]),
                    next_steps=[], containment=[], missing_data=[]).model_dump_json()
 
 

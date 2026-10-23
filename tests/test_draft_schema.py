@@ -5,8 +5,8 @@ from pydantic import ValidationError
 
 from triage.enrich import MAX_CVES, MAX_TECHNIQUES
 from triage.schemas import (
-    MAX_MISSING_DATA, AgentResult, DraftContainment, DraftMissing, DraftSeverity, DraftStep,
-    DraftTechnique, Enrichment, ModelDraft,
+    MAX_MISSING_DATA, MAX_SOURCES, AgentResult, DraftContainment, DraftMissing, DraftSeverity,
+    DraftStep, DraftTechnique, Enrichment, ModelDraft,
 )
 
 EID = "attack_lookup:0123456789abcdef"
@@ -22,20 +22,46 @@ FINDINGS = {
 
 
 def _draft(**overrides):
-    base = {"severity": {"value": "low", "rationale": "r", "alert_fields": ["rule_level"]},
+    base = {"severity": {"value": "low", "rationale": "r", "sources": ["rule_level"]},
             "next_steps": [], "containment": [], "missing_data": []}
     return {**base, **overrides}
 
 
 @pytest.mark.parametrize("model", FINDINGS, ids=lambda m: m.__name__)
 def test_finding_without_sources_rejected(model):
-    """An uncited finding cannot be checked, so it is rejected."""
-    with pytest.raises(ValidationError, match="must cite evidence_ids or alert_fields"):
+    """An uncited finding cannot be checked, so sources is required and non-empty."""
+    with pytest.raises(ValidationError) as missing:
         model(**FINDINGS[model])
+    assert [(e["loc"], e["type"]) for e in missing.value.errors()] == [(("sources",), "missing")]
+    with pytest.raises(ValidationError) as empty:
+        model(**FINDINGS[model], sources=[])
+    assert [(e["loc"], e["type"]) for e in empty.value.errors()] == [(("sources",), "too_short")]
+    assert model(**FINDINGS[model], sources=[EID]).sources == [EID]
+    assert model(**FINDINGS[model], sources=["host"]).sources == ["host"]
+    assert model(**FINDINGS[model], sources=[EID, "host"]).sources == [EID, "host"]
+
+
+@pytest.mark.parametrize("model", FINDINGS, ids=lambda m: m.__name__)
+@pytest.mark.parametrize("bad", [
+    "the PowerShell event",                 # free text
+    None,
+    {"evidence_id": EID},                   # an object instead of a string
+    ["host"],
+    7,
+])
+def test_source_items_must_be_field_names_or_evidence_ids(model, bad):
+    """A source is an alert-field name or an evidence-ID-shaped string, nothing else."""
     with pytest.raises(ValidationError):
-        model(**FINDINGS[model], evidence_ids=[], alert_fields=[])
-    assert model(**FINDINGS[model], evidence_ids=[EID]).evidence_ids == [EID]
-    assert model(**FINDINGS[model], alert_fields=["host"]).alert_fields == ["host"]
+        model(**FINDINGS[model], sources=[bad])
+
+
+@pytest.mark.parametrize("old", ["evidence_ids", "alert_fields"])
+def test_old_citation_keys_rejected(old):
+    """The replaced two-list form is not accepted, even alongside sources."""
+    with pytest.raises(ValidationError):
+        DraftStep(step="s", **{old: ["host"]})
+    with pytest.raises(ValidationError):
+        DraftStep(step="s", sources=["host"], **{old: ["host"]})
 
 
 @pytest.mark.parametrize("bad", [
@@ -49,13 +75,13 @@ def test_finding_without_sources_rejected(model):
 def test_bad_evidence_id_shapes_rejected(bad):
     """Only our own evidence-ID shape can be cited; anything else is not from this run."""
     with pytest.raises(ValidationError):
-        DraftStep(step="s", evidence_ids=[bad])
+        DraftStep(step="s", sources=[bad])
 
 
 def test_unknown_alert_field_rejected():
     """Alert-field citations name a fixed set of fields, not arbitrary text."""
     with pytest.raises(ValidationError):
-        DraftStep(step="s", alert_fields=["command_line"])
+        DraftStep(step="s", sources=["command_line"])
 
 
 def test_unknown_fields_rejected():
@@ -63,14 +89,14 @@ def test_unknown_fields_rejected():
     with pytest.raises(ValidationError):
         ModelDraft.model_validate(_draft(verdict="false_positive"))
     with pytest.raises(ValidationError):
-        DraftStep(step="s", alert_fields=["host"], confidence="high")
+        DraftStep(step="s", sources=["host"], confidence="high")
 
 
 def test_containment_cannot_be_preapproved():
     """The model can suggest containment, never approve it."""
     with pytest.raises(ValidationError):
-        DraftContainment(action="Isolate the host.", alert_fields=["host"], requires_human_approval=False)
-    assert DraftContainment(action="a", alert_fields=["host"]).requires_human_approval is True
+        DraftContainment(action="Isolate the host.", sources=["host"], requires_human_approval=False)
+    assert DraftContainment(action="a", sources=["host"]).requires_human_approval is True
 
 
 @pytest.mark.parametrize("model, field, cap", [
@@ -81,16 +107,16 @@ def test_containment_cannot_be_preapproved():
 ])
 def test_string_caps(model, field, cap):
     """Over-long model strings are rejected, not passed on."""
-    args = {**FINDINGS[model], "alert_fields": ["host"]}
+    args = {**FINDINGS[model], "sources": ["host"]}
     model(**{**args, field: "x" * cap})
     with pytest.raises(ValidationError):
         model(**{**args, field: "x" * (cap + 1)})
 
 
 @pytest.mark.parametrize("field, cap, item", [
-    ("next_steps", 8, {"step": "s", "alert_fields": ["host"]}),
-    ("containment", 5, {"action": "a", "alert_fields": ["host"]}),
-    ("missing_data", MAX_MISSING_DATA, {"kind": "other", "description": "d", "alert_fields": ["event"]}),
+    ("next_steps", 8, {"step": "s", "sources": ["host"]}),
+    ("containment", 5, {"action": "a", "sources": ["host"]}),
+    ("missing_data", MAX_MISSING_DATA, {"kind": "other", "description": "d", "sources": ["event"]}),
 ])
 def test_list_caps(field, cap, item):
     """A model cannot flood the draft with findings."""
@@ -108,11 +134,10 @@ def test_missing_data_cap_covers_every_enrichment_gap():
 
 def test_source_list_caps():
     """Citation lists are bounded too."""
-    DraftStep(step="s", evidence_ids=[EID] * 10, alert_fields=["host"] * 9)
+    assert MAX_SOURCES == 19
+    DraftStep(step="s", sources=[EID] * 10 + ["host"] * 9)
     with pytest.raises(ValidationError):
-        DraftStep(step="s", evidence_ids=[EID] * 11)
-    with pytest.raises(ValidationError):
-        DraftStep(step="s", alert_fields=["host"] * 10)
+        DraftStep(step="s", sources=[EID] * 10 + ["host"] * 10)
 
 
 def test_model_draft_has_no_verdict_field():

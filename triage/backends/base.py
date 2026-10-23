@@ -18,6 +18,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from ..citations import Citable
 from ..schemas import Alert, Enrichment
 
 
@@ -38,6 +39,8 @@ class ChatRequest:
     # For the rule-based backend only; never serialized or sent to a model.
     alert: Alert
     enrichment: Enrichment
+    # For the rule-based backend only; never serialized or sent to a model.
+    citable: Citable | None = None
 
 
 @dataclass(frozen=True)

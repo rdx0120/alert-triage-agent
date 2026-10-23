@@ -308,6 +308,8 @@ output until the output guardrails exist, and nothing at this stage treats it
 as a verdict. A single-call mode with no tool calls lets evaluation compare the
 model with and without investigation.
 
+The citation format and checks are superseded by DD-015.
+
 ---
 
 ## DD-014: The Ollama adapter is a thin, fail-closed HTTP client with hard deadlines
@@ -350,3 +352,38 @@ return as `budget_exceeded`. A model that reaches its output limit returns
 truncated text, which then fails validation. The model and its options are
 chosen on the evaluation host, where the live smoke test also checks that the
 prompt token count Ollama reports never exceeds the byte-based bound.
+
+---
+
+## DD-015: Draft citations are drawn from the run's evidence and checked against it
+
+**Context.** A draft is only useful if each finding can be traced to what this
+run looked up or to the alert itself. Two private trials on synthetic samples
+showed why a schema alone is not enough: with optional citation lists the model
+left findings uncited, and with a single list checked only for format it cited
+correctly formatted evidence IDs that did not exist. Evidence IDs are
+deterministic, so an ID can also be copied into alert text by an attacker.
+
+**Decision.** Every finding lists its sources in one required, non-empty list;
+a source is an evidence ID or one of nine alert-field names. Which evidence IDs
+are citable is decided from the results this run rendered into the prompt:
+technique, severity, step and containment findings may cite only successful
+results whose data the model was shown, and missing-data findings may also cite
+failed or not-found lookups that were shown. Results from tools outside the
+allow-list, results left out of the prompt by its size limits and IDs that
+appear only in alert text are never citable. The schema sent with the final and
+repair requests lists only the citable IDs and the alert-field names. Every
+final and repair reply is then checked against the same set, and an alert field
+may be cited only when it has a value, except by missing-data findings. A reply
+that fails gets the existing single repair attempt, with fixed hints that ask
+for corrected sources rather than deleted findings; a repair that still fails
+ends the run as `invalid_output` with no draft. The number of findings in each
+attempt is recorded for evaluation and never affects acceptance.
+
+**Consequences.** An accepted draft cannot cite evidence the run did not show
+the model, and the check holds even for a backend that ignores the schema.
+Whether a cited source actually supports its finding is not checked; that is a
+question for evaluation, alongside the planned severity floor and ATT&CK output
+controls. A model that cannot cite correctly produces `invalid_output` rather
+than a draft with unsupported claims. The schema grows with the number of
+citable results; the worst-case budget test covers the largest possible set.

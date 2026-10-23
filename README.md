@@ -61,7 +61,7 @@ service.
 |---|---|---|
 | Alert fields (command lines, usernames, paths) | Untrusted | Validated and size-capped; strict patterns before reaching any lookup; sent in a separate prompt section that the instructions describe as data; spotlighting (datamarking) is planned. The model may still be influenced by this text, so the output is not trusted either |
 | Local snapshots (ATT&CK, KEV/EPSS, assets, runbooks) | Trusted, versioned | Built offline by `scripts/`, with source version and hash recorded |
-| Model output | Untrusted | Schema-validated draft (`ModelDraft`); each finding cites evidence IDs or alert fields. Checking those citations against the run is planned |
+| Model output | Untrusted | Schema-validated draft (`ModelDraft`); every finding lists sources, and a draft is accepted only if each cited evidence ID was shown to the model in this run and each cited alert field is present (missing-data findings may cite absence). Whether a citation supports its claim is not checked |
 
 ## Security controls
 
@@ -83,7 +83,8 @@ service.
 | Spotlighting (datamarking) of alert fields | Indirect prompt injection | Planned |
 | Injection tripwire raising severity | Alerts that address the model | Planned |
 | Severity floor: final severity never below the detection rule's level | Injection downgrading an alert | Planned |
-| Evidence-ID citation check; ATT&CK ID allow-list on output | Hallucinated findings | Planned |
+| Draft citations restricted to evidence shown in this run and checked before a draft is accepted; unknown-tool errors and evidence left out of the prompt are not citable | Fabricated provenance | Implemented |
+| ATT&CK ID allow-list on output; citation relevance | Hallucinated findings | Planned |
 | Model-call, tool-call and time limits; prompts bounded in bytes so they fit the context window, with output space reserved | Unbounded consumption; silent context truncation | Implemented |
 | Model-requested lookups recorded separately from enrichment | Untraceable model-steered evidence | Implemented |
 | Model endpoint must be an `http(s)` URL without credentials, path or query; no proxy or redirect handling; TLS verified | Alert data sent somewhere unintended | Implemented |
