@@ -2,6 +2,7 @@
 
 import ast
 import dataclasses
+import errno
 import http.client
 import json
 import os
@@ -258,7 +259,7 @@ def test_bad_reply_is_backend_error(case, investigate_request):
 
 
 @pytest.mark.parametrize("error", [
-    ConnectionRefusedError(MARKER), TimeoutError(MARKER), ssl.SSLError(MARKER), http.client.BadStatusLine(MARKER),
+    ConnectionRefusedError(MARKER), ssl.SSLError(MARKER), http.client.BadStatusLine(MARKER),
 ], ids=lambda e: type(e).__name__)
 def test_transport_failure_is_connection_failed(error, investigate_request):
     """Network and protocol failures become one fixed error that names no endpoint detail."""
@@ -266,6 +267,27 @@ def test_transport_failure_is_connection_failed(error, investigate_request):
     with pytest.raises(BackendError) as excinfo:
         backend.chat(investigate_request)
     assert str(excinfo.value) == "ollama: connection failed" and excinfo.value.__cause__ is None
+
+
+def test_socket_timeout_is_deadline_exceeded(investigate_request):
+    """A socket timeout is the request deadline, whichever of it and the watchdog fires first."""
+    backend, _ = _backend(TimeoutError(MARKER))
+    with pytest.raises(BackendError) as excinfo:
+        backend.chat(investigate_request)
+    assert str(excinfo.value) == "ollama: request deadline exceeded"
+    assert MARKER not in str(excinfo.value) and excinfo.value.__cause__ is None
+
+
+@pytest.mark.parametrize("error", [
+    ssl.SSLError(MARKER), ConnectionResetError(MARKER), OSError(errno.ETIMEDOUT, MARKER),
+], ids=["SSLError", "ConnectionResetError", "kernel_ETIMEDOUT"])
+def test_other_os_error_is_connection_failed(error, investigate_request):
+    """Other OSErrors, including a kernel ETIMEDOUT that can come before the deadline, are connection failures."""
+    backend, _ = _backend(error)
+    with pytest.raises(BackendError) as excinfo:
+        backend.chat(investigate_request)
+    assert str(excinfo.value) == "ollama: connection failed"
+    assert MARKER not in str(excinfo.value) and excinfo.value.__cause__ is None
 
 
 def test_bug_in_transport_propagates(investigate_request):

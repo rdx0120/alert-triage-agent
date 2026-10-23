@@ -255,8 +255,16 @@ class OllamaBackend:
             # can end with a truncated body that looks like a normal end of file.
             raise BackendError("ollama: request deadline exceeded")
 
+        if isinstance(exchange.error, TimeoutError) and exchange.error.errno is None:
+            # Python raises its own socket timeout with errno None when a socket
+            # operation exhausts its configured timeout. That timeout is set to
+            # the request deadline, so this is the deadline, whichever of the
+            # socket timeout and the watchdog fires first. A kernel ETIMEDOUT is
+            # also a TimeoutError but carries an errno and can occur before the
+            # deadline, so it is left to the connection-failure branch below.
+            raise BackendError("ollama: request deadline exceeded") from None
         if isinstance(exchange.error, (OSError, http.client.HTTPException)):
-            # OSError includes timeouts and ssl.SSLError.
+            # OSError includes ssl.SSLError and kernel ETIMEDOUT.
             raise BackendError("ollama: connection failed") from None
         if exchange.error is not None:
             raise exchange.error  # a bug must not be reported as a backend failure
