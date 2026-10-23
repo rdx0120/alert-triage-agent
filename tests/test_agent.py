@@ -23,7 +23,7 @@ from triage.prompt import (
     TOOL_RESULT_MAX_BYTES, dumps, enrichment_view, initial_messages, render_assistant, render_result,
     render_result_detail, wire_len,
 )
-from triage.schemas import AgentResult, Alert, DraftSeverity, ModelDraft
+from triage.schemas import AgentResult, Alert, DraftSeverity, ModelCallRecord, ModelDraft, ToolCallRecord
 from triage.tools import registry
 
 SAMPLES = sorted((REPO_ROOT / "samples" / "alerts").glob("*/*.json"))
@@ -1148,3 +1148,92 @@ def test_run_record_never_holds_untrusted_text(settings, tools):
     assert len([r for r in result.tool_records if r.requested_by == "model"]) == 3
     assert MARKER not in _record_text(result)
     assert MARKER.lower() not in _record_text(result).lower()
+
+
+@pytest.mark.parametrize("returned,recorded", [
+    ("stop", "stop"), ("length", "length"), (f"weird {MARKER}\nreason", "other"), (["stop"], None), (None, None),
+], ids=["stop", "length", "unlisted", "list", "none"])
+def test_finish_reason_recorded_from_closed_set(returned, recorded, settings, tools):
+    """Whatever a backend returns as finish reason, the record must hold only a listed value or None."""
+    replies = [ChatReply(finish_reason=returned), ChatReply(text=VALID, finish_reason=returned)]
+    result, _ = _run(_powershell(), replies, settings, tools)
+    assert result.stop_reason == "completed"
+    assert [c.finish_reason for c in result.model_calls] == [recorded, recorded]
+    assert MARKER not in _record_text(result)
+
+
+def _completed_with_lookup(settings, tools, monkeypatch):
+    replies = [_calls(_attack("T1003"), ("asset_lookup", {"host": "nope"})), ChatReply(), ChatReply(text=VALID)]
+    return _run(_powershell(), replies, settings, tools)[0]
+
+
+def _repaired(settings, tools, monkeypatch):
+    return _run(_powershell(), [ChatReply(), _draft_citing(FABRICATED), _draft_citing("rule_level")],
+                settings, tools)[0]
+
+
+def _invalid_output(settings, tools, monkeypatch):
+    replies = [ChatReply(), ChatReply(text=_invalid_with_marker()), _draft_citing("rule_level", FABRICATED)]
+    return _run(_powershell(), replies, settings, tools)[0]
+
+
+def _backend_error(settings, tools, monkeypatch):
+    return _run(_powershell(), [_calls(_attack("T1003")), BackendError("boom", error_type="timeout")],
+                settings, tools)[0]
+
+
+@pytest.mark.parametrize("scenario,reason", [
+    (_completed_with_lookup, "completed"),
+    (_repaired, "completed"),
+    (_invalid_output, "invalid_output"),
+    (_backend_error, "backend_error"),
+    (_deadline_before_request, "budget_exceeded"),
+    (_over_context_budget, "budget_exceeded"),
+    (_deadline_during_request, "budget_exceeded"),
+    (_deadline_after_reply, "budget_exceeded"),
+], ids=["completed", "repair", "invalid_output", "backend_error", "deadline_before_request",
+        "request_over_context_budget", "deadline_during_request", "deadline_after_reply"])
+def test_records_validate_against_their_schema(scenario, reason, monkeypatch, settings, tools):
+    """Fields are assigned after construction without validation, so every record must still validate."""
+    result = scenario(settings, tools, monkeypatch)
+    assert result.stop_reason == reason
+    for record in result.model_calls:
+        assert ModelCallRecord.model_validate(record.model_dump()) == record
+    for record in result.tool_records:
+        assert ToolCallRecord.model_validate(record.model_dump()) == record
+
+
+class CountingCalls:
+    """Counts its calls and returns a fixed value."""
+
+    def __init__(self, value):
+        self.value = value
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        return self.value
+
+
+@pytest.mark.parametrize("run_id", [
+    "NOT-HEX", "0" * 31, "0" * 33, RUN_ID.upper(), "", RUN_ID + "\n", 12345, RUN_ID[:19] + MARKER,
+], ids=["not_hex", "31_chars", "33_chars", "uppercase", "empty", "trailing_newline", "not_a_string", "marker"])
+def test_malformed_run_id_rejected_before_any_work(run_id, monkeypatch, settings, tools):
+    """A malformed injected run ID must be rejected before any clock read, lookup or model call."""
+    spy = CountingCalls(None)
+    monkeypatch.setattr(registry, "run_tool", spy)
+    clock, timer = CountingClock(), CountingTimer()
+    wall_clock = CountingCalls(datetime(2026, 1, 1, tzinfo=timezone.utc))
+    backend = ScriptedBackend([ChatReply(), ChatReply(text=VALID)])
+    with pytest.raises(ValueError, match="run_id") as raised:
+        run_agent(_powershell(), backend, settings=settings, tools=tools, clock=clock, timer=timer,
+                  wall_clock=wall_clock, run_id=run_id)
+    assert backend.requests == [] and spy.calls == 0
+    assert (clock.reads, timer.reads, wall_clock.calls) == (0, 0, 0)
+    assert MARKER not in str(raised.value) and (run_id == "" or str(run_id) not in str(raised.value))
+
+
+def test_valid_injected_run_id_kept(settings, tools):
+    """A well-formed injected run ID must be used as given."""
+    result = run_agent(_powershell(), HeuristicBackend(), settings=settings, tools=tools, run_id=RUN_ID)
+    assert result.stop_reason == "completed" and result.run_id == RUN_ID

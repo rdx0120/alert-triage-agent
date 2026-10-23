@@ -36,8 +36,8 @@ from .prompt import (
 )
 from .schemas import (
     Alert, AgentResult, BackendErrorType, BudgetDetail, DraftContainment, DraftMissing, DraftSeverity,
-    DraftSources, DraftStep, DraftTechnique, EvidenceOrigin, ModelCallRecord, ModelDraft, ModelPhase,
-    StopReason, ToolCallRecord, ToolResult,
+    DraftSources, DraftStep, DraftTechnique, EvidenceOrigin, FinishReason, ModelCallRecord, ModelDraft,
+    ModelPhase, RUN_ID_PATTERN, StopReason, ToolCallRecord, ToolResult,
 )
 from .tools import build_tools
 from .tools.registry import Tool
@@ -181,6 +181,12 @@ def run_agent(alert: Alert, backend: Backend, *, settings: Settings | None = Non
     # `timer` is read only for the recorded durations. Measuring must never
     # change when a run stops, and the deadline tests feed `clock` a fixed
     # sequence of readings.
+    # A malformed injected ID is rejected before any clock read, lookup or
+    # model call, so a bad caller never costs a run whose result is then lost.
+    # fullmatch, because the pattern's "$" would let re.match accept a trailing
+    # newline. The value is not echoed: it comes from the caller.
+    if run_id is not None and not (isinstance(run_id, str) and re.fullmatch(RUN_ID_PATTERN, run_id)):
+        raise ValueError("run_id must be 32 lowercase hexadecimal characters")
     began = timer()
     run_id = run_id or uuid.uuid4().hex
     started_at = wall_clock().astimezone(timezone.utc).isoformat(timespec="milliseconds")
@@ -271,7 +277,13 @@ def run_agent(alert: Alert, backend: Backend, *, settings: Settings | None = Non
         # reasons never depend on it, and a truncated reply is not treated as
         # a lost tool call.
         record.truncated = reply.truncated
-        record.finish_reason = reply.finish_reason
+        # The record's fields are a closed set whatever the backend returns,
+        # the same rule as error_type: field assignment is not validated, so
+        # an unlisted string is recorded as "other" and a non-string as None.
+        finish_reason = reply.finish_reason
+        if finish_reason not in get_args(FinishReason):
+            finish_reason = "other" if isinstance(finish_reason, str) else None
+        record.finish_reason = finish_reason
         record.reply = "tool_calls" if reply.tool_calls else ("text" if reply.text else "empty")
         # A digest of the text only, not of the tool calls. surrogatepass
         # because model text may contain lone surrogates. The text is hashed
