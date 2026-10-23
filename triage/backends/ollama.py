@@ -152,15 +152,15 @@ def _count(value) -> int | None:
 
 
 def _malformed() -> BackendError:
-    return BackendError("ollama: malformed response")
+    return BackendError("ollama: malformed response", error_type="malformed_response")
 
 
 def _parse(status: int, data: bytes) -> ChatReply:
     # Every failure has a fixed message that never includes response content.
     if status != 200:
-        raise BackendError(f"ollama: HTTP {status}")
+        raise BackendError(f"ollama: HTTP {status}", error_type="http_status")
     if len(data) > MAX_RESPONSE_BYTES:
-        raise BackendError("ollama: response too large")
+        raise BackendError("ollama: response too large", error_type="response_too_large")
     try:
         body = json.loads(data.decode("utf-8"))
     except (ValueError, RecursionError):  # includes UnicodeDecodeError
@@ -168,7 +168,7 @@ def _parse(status: int, data: bytes) -> ChatReply:
     if not isinstance(body, dict):
         raise _malformed()
     if "error" in body:
-        raise BackendError("ollama: server reported an error")
+        raise BackendError("ollama: server reported an error", error_type="server_error")
     message = body.get("message")
     if body.get("done") is not True or not isinstance(message, dict):
         raise _malformed()
@@ -189,7 +189,15 @@ def _parse(status: int, data: bytes) -> ChatReply:
     return ChatReply(text=content or "", tool_calls=calls,
                      input_tokens=_count(body.get("prompt_eval_count")),
                      output_tokens=_count(body.get("eval_count")),
-                     truncated=body.get("done_reason") == "length")
+                     truncated=body.get("done_reason") == "length",
+                     finish_reason=_finish_reason(body.get("done_reason")))
+
+
+def _finish_reason(done_reason) -> str | None:
+    # Normalized to a closed set, so a server string is never recorded as sent.
+    if not isinstance(done_reason, str):
+        return None
+    return done_reason if done_reason in ("stop", "length") else "other"
 
 
 class OllamaBackend:
@@ -236,7 +244,7 @@ class OllamaBackend:
 
         with _live_lock:
             if len(_live_workers) >= MAX_LIVE_WORKERS:
-                raise BackendError("ollama: earlier requests still pending")
+                raise BackendError("ollama: earlier requests still pending", error_type="workers_busy")
             worker = threading.Thread(target=work, name="ollama-request", daemon=True)
             _live_workers.add(worker)
         try:
@@ -246,14 +254,15 @@ class OllamaBackend:
             with _live_lock:
                 _live_workers.discard(worker)
             if isinstance(e, Exception):
-                raise BackendError("ollama: could not start a request worker") from None
+                raise BackendError("ollama: could not start a request worker",
+                                   error_type="worker_start_failed") from None
             raise
         worker.join(request.timeout_s)
         if worker.is_alive():
             exchange.abort()
             # The result is never read after this: a worker woken by shutdown
             # can end with a truncated body that looks like a normal end of file.
-            raise BackendError("ollama: request deadline exceeded")
+            raise BackendError("ollama: request deadline exceeded", error_type="timeout")
 
         if isinstance(exchange.error, TimeoutError) and exchange.error.errno is None:
             # Python raises its own socket timeout with errno None when a socket
@@ -262,10 +271,10 @@ class OllamaBackend:
             # socket timeout and the watchdog fires first. A kernel ETIMEDOUT is
             # also a TimeoutError but carries an errno and can occur before the
             # deadline, so it is left to the connection-failure branch below.
-            raise BackendError("ollama: request deadline exceeded") from None
+            raise BackendError("ollama: request deadline exceeded", error_type="timeout") from None
         if isinstance(exchange.error, (OSError, http.client.HTTPException)):
             # OSError includes ssl.SSLError and kernel ETIMEDOUT.
-            raise BackendError("ollama: connection failed") from None
+            raise BackendError("ollama: connection failed", error_type="connection_failed") from None
         if exchange.error is not None:
             raise exchange.error  # a bug must not be reported as a backend failure
         return _parse(*exchange.result)

@@ -3,6 +3,7 @@
 import ast
 import dataclasses
 import errno
+import hashlib
 import http.client
 import json
 import os
@@ -217,6 +218,18 @@ def test_done_reason_maps_to_truncated(done_reason, truncated, final_request):
     assert backend.chat(final_request).truncated is truncated
 
 
+@pytest.mark.parametrize("done_reason, finish_reason, truncated", [
+    ("stop", "stop", False), ("length", "length", True), ("load", "other", False), ("LENGTH", "other", False),
+    (_MISSING, None, False), (None, None, False), (1, None, False),
+])
+def test_done_reason_maps_to_finish_reason(done_reason, finish_reason, truncated, final_request):
+    """done_reason must map to a closed finish reason, with truncated unchanged."""
+    fields = {} if done_reason is _MISSING else {"done_reason": done_reason}
+    backend, _ = _backend(_reply(VALID, **fields))
+    reply = backend.chat(final_request)
+    assert (reply.finish_reason, reply.truncated) == (finish_reason, truncated)
+
+
 # --- Fail closed ---------------------------------------------------------
 
 def _json(obj):
@@ -256,6 +269,41 @@ def test_bad_reply_is_backend_error(case, investigate_request):
         backend.chat(investigate_request)
     assert str(excinfo.value) == message
     assert MARKER not in str(excinfo.value) and excinfo.value.__cause__ is None
+
+
+_ERROR_TYPES = {"ollama: response too large": "response_too_large", "ollama: malformed response": "malformed_response",
+                "ollama: server reported an error": "server_error"}
+
+
+@pytest.mark.parametrize("case", BAD_REPLIES)
+def test_bad_reply_error_type(case, investigate_request):
+    """Each bad-reply raise site must carry its error type, with its message unchanged."""
+    reply, message = BAD_REPLIES[case]
+    backend, _ = _backend(reply)
+    with pytest.raises(BackendError) as excinfo:
+        backend.chat(investigate_request)
+    expected = "http_status" if message.startswith("ollama: HTTP ") else _ERROR_TYPES[message]
+    assert (excinfo.value.error_type, str(excinfo.value)) == (expected, message)
+
+
+@pytest.mark.parametrize("error, message, error_type", [
+    (ConnectionRefusedError(MARKER), "ollama: connection failed", "connection_failed"),
+    (OSError(errno.ETIMEDOUT, MARKER), "ollama: connection failed", "connection_failed"),
+    (http.client.BadStatusLine(MARKER), "ollama: connection failed", "connection_failed"),
+    (TimeoutError(MARKER), "ollama: request deadline exceeded", "timeout"),
+], ids=["refused", "kernel_ETIMEDOUT", "BadStatusLine", "socket_timeout"])
+def test_transport_failure_error_type(error, message, error_type, investigate_request):
+    """Transport failures must carry their error type, with their message unchanged."""
+    backend, _ = _backend(error)
+    with pytest.raises(BackendError) as excinfo:
+        backend.chat(investigate_request)
+    assert (excinfo.value.error_type, str(excinfo.value)) == (error_type, message)
+
+
+def test_backend_error_default_type():
+    """A BackendError raised without a type must default to "_OTHER" and keep its message."""
+    error = BackendError("x")
+    assert (error.error_type, str(error)) == ("_OTHER", "x")
 
 
 @pytest.mark.parametrize("error", [
@@ -395,6 +443,19 @@ def test_watchdog_deadline(release, investigate_request):
     assert message == "ollama: request deadline exceeded" and elapsed < 0.3 + 1.0
 
 
+def test_watchdog_and_busy_error_types(release, investigate_request):
+    """The watchdog deadline and the live-worker cap must carry their error types, with messages unchanged."""
+    backend = OllamaBackend(HOST, MODEL, transport=_blocking(release))
+    request = dataclasses.replace(investigate_request, timeout_s=0.3)
+    errors = []
+    for _ in range(3):
+        with pytest.raises(BackendError) as excinfo:
+            backend.chat(request)
+        errors.append((excinfo.value.error_type, str(excinfo.value)))
+    assert errors == [("timeout", "ollama: request deadline exceeded")] * 2 + [
+        ("workers_busy", "ollama: earlier requests still pending")]
+
+
 def test_repeated_timeouts_do_not_accumulate_workers(release, investigate_request):
     """Workers left behind by timed-out requests are capped; further requests fail at once."""
     backend = OllamaBackend(HOST, MODEL, transport=_blocking(release))
@@ -429,6 +490,16 @@ def test_failed_thread_start_frees_slot(monkeypatch, investigate_request):
                 backend.chat(investigate_request)
             assert live_workers() == 0
     assert backend.chat(investigate_request).text == ""
+
+
+def test_failed_thread_start_error_type(monkeypatch, investigate_request):
+    """A worker that fails to start must carry its error type, with its message unchanged."""
+    backend, _ = _backend(_reply())
+    monkeypatch.setattr(ollama.threading, "Thread", _unstartable(RuntimeError("can't start new thread")))
+    with pytest.raises(BackendError) as excinfo:
+        backend.chat(investigate_request)
+    assert (excinfo.value.error_type, str(excinfo.value)) == (
+        "worker_start_failed", "ollama: could not start a request worker")
 
 
 def test_interrupted_thread_start_frees_slot(monkeypatch, investigate_request):
@@ -793,6 +864,44 @@ def test_agent_run_output_limits_in_body(settings, tools):
     assert [o["num_predict"] for o in options] == [384, 384, 1024]
     assert [o["num_ctx"] for o in options] == [32768] * 3
     assert [c.truncated for c in result.model_calls] == [True, False, False]
+
+
+class RecordingOllama(OllamaBackend):
+    """The Ollama adapter, recording every request it is given."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.requests = []
+
+    def chat(self, request):
+        self.requests.append(request)
+        return super().chat(request)
+
+
+def test_agent_run_request_digest_scope(settings, tools):
+    """The request digest must cover the serialized prompt only, not the HTTP body that adds model and options."""
+    alert = load_alert(POWERSHELL.read_text(encoding="utf-8"), fmt="wazuh")
+    lookup = {"function": {"name": "attack_lookup", "arguments": {"technique_id": "T1003"}}}
+    transport = FakeTransport(_reply(tool_calls=[lookup], done_reason="stop"), _reply(done_reason="load"),
+                              _reply(VALID, done_reason="length"))
+    backend = RecordingOllama(HOST, MODEL, transport=transport)
+    result = run_agent(alert, backend, settings=settings, tools=tools)
+    assert result.stop_reason == "completed" and result.model == MODEL
+    assert len(result.model_calls) == len(backend.requests) == len(transport.calls) == 3
+    for record, request, (_, body, _) in zip(result.model_calls, backend.requests, transport.calls):
+        assert record.request_sha256 == hashlib.sha256(serialize_request(request)).hexdigest()
+        assert record.request_sha256 != hashlib.sha256(body).hexdigest()
+        assert MODEL.encode() in body and b'"options"' in body
+    assert [c.finish_reason for c in result.model_calls] == ["stop", "other", "length"]
+
+
+def test_agent_run_records_adapter_error_type(settings, tools):
+    """A run stopped by an adapter failure must record the adapter's error type and not its message."""
+    alert = load_alert(POWERSHELL.read_text(encoding="utf-8"), fmt="wazuh")
+    backend, _ = _backend((500, MARKER.encode()))
+    result = run_agent(alert, backend, settings=settings, tools=tools)
+    assert result.stop_reason == "backend_error" and result.model_calls[-1].error_type == "http_status"
+    assert MARKER not in result.model_dump_json()
 
 
 def test_agent_run_transport_failure(settings, tools):

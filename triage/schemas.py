@@ -217,6 +217,18 @@ class ModelDraft(Strict):
 StopReason = Literal["completed", "budget_exceeded", "backend_error", "invalid_output"]
 EvidenceOrigin = Literal["enrichment", "model"]
 ModelPhase = Literal["investigate", "final", "repair"]
+FinishReason = Literal["stop", "length", "other"]
+ReplyKind = Literal["tool_calls", "text", "empty"]
+# Why a backend call raised. Closed list; anything else is "_OTHER"
+# (OpenTelemetry's fallback). Never the error message.
+BackendErrorType = Literal["timeout", "connection_failed", "http_status", "response_too_large",
+                           "malformed_response", "server_error", "workers_busy",
+                           "worker_start_failed", "_OTHER"]
+ToolView = Literal["full", "capped", "omitted", "not_shown"]
+BudgetDetail = Literal["deadline_before_request", "request_over_context_budget",
+                       "deadline_during_request", "deadline_after_reply"]
+SHA256_PATTERN = r"^[0-9a-f]{64}$"
+RUN_ID_PATTERN = r"^[0-9a-f]{32}$"
 
 
 class ModelCallRecord(Strict):
@@ -230,6 +242,39 @@ class ModelCallRecord(Strict):
     tool_calls_dropped: int = 0
     finding_counts: dict[str, int] | None = None  # final and repair replies; for evaluation only
     truncated: bool = False     # the reply stopped at its output limit; for evaluation only
+    turn: int | None = None                  # investigation turn, 1-based; None for final/repair
+    start_s: float | None = None             # offset from run start, observational timer
+    duration_s: float | None = None          # duration of backend.chat()
+    # Digest of the serialize_request() bytes only (messages, tools, schema),
+    # not the full HTTP body, which also carries the model and options.
+    request_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    finish_reason: FinishReason | None = None
+    reply: ReplyKind | None = None           # None when backend.chat() raised
+    reply_text_bytes: int | None = None      # size only, never the text
+    # Digest of the reply text only; tool calls are not covered, so tool-only
+    # replies with empty text all share the empty-string digest.
+    reply_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    accepted: bool | None = None             # final/repair: passed validation and citation checks
+    problems: list[str] | None = None        # final/repair: sanitized, capped; [] when accepted
+    error_type: BackendErrorType | None = None
+
+
+class ToolCallRecord(Strict):
+    """One lookup the run made, as metadata: never its arguments or data."""
+    evidence_id: str = Field(pattern=EVIDENCE_ID_PATTERN)
+    # As recorded by the gateway: the loop's normalized name, so an
+    # unoffered name the model asked for is kept but shape-limited.
+    tool: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    requested_by: EvidenceOrigin      # who asked for this call
+    status: ToolStatus
+    turn: int                         # 0 for enrichment, else the investigation turn
+    repeat: bool = False              # served from the evidence log, not run again
+    start_s: float | None = None      # model-requested calls only
+    duration_s: float | None = None
+    view: ToolView
+    view_string_cap: int | None = None   # byte cap applied to its strings
+    view_strings_cut: int | None = None  # strings that cap shortened
+    view_bytes: int | None = None        # size of the view, as the budget measures it
 
 
 class AgentResult(Strict):
@@ -243,11 +288,25 @@ class AgentResult(Strict):
     model_calls: list[ModelCallRecord]
     tool_calls: int
     validation_errors: list[str] = []           # sanitized paths from the last failed validation
+    run_id: str | None = Field(default=None, pattern=RUN_ID_PATTERN)
+    started_at: str | None = None            # UTC, ISO 8601 with milliseconds, "Z" suffix
+    duration_s: float | None = None
+    enrichment_duration_s: float | None = None
+    model: str | None = None                 # the backend's model name, if it has one
+    budget_detail: BudgetDetail | None = None   # set only when stop_reason is budget_exceeded
+    tool_records: list[ToolCallRecord] = []
 
     @model_validator(mode="after")
     def _draft_only_when_completed(self) -> "AgentResult":
         if (self.draft is not None) != (self.stop_reason == "completed"):
             raise ValueError("a draft is present if and only if stop_reason is 'completed'")
+        return self
+
+    @model_validator(mode="after")
+    def _budget_detail_only_on_budget_stop(self) -> "AgentResult":
+        # run_agent always sets one on a budget stop; this rejects the reverse.
+        if self.budget_detail is not None and self.stop_reason != "budget_exceeded":
+            raise ValueError("budget_detail is set only when stop_reason is 'budget_exceeded'")
         return self
 
 
