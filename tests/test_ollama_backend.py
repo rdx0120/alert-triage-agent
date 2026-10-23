@@ -2,6 +2,7 @@
 
 import ast
 import dataclasses
+import errno
 import http.client
 import json
 import os
@@ -277,14 +278,16 @@ def test_socket_timeout_is_deadline_exceeded(investigate_request):
     assert MARKER not in str(excinfo.value) and excinfo.value.__cause__ is None
 
 
-@pytest.mark.parametrize("error", [ssl.SSLError(MARKER), ConnectionResetError(MARKER)],
-                         ids=lambda e: type(e).__name__)
+@pytest.mark.parametrize("error", [
+    ssl.SSLError(MARKER), ConnectionResetError(MARKER), OSError(errno.ETIMEDOUT, MARKER),
+], ids=["SSLError", "ConnectionResetError", "kernel_ETIMEDOUT"])
 def test_other_os_error_is_connection_failed(error, investigate_request):
-    """OSError subclasses that are not timeouts still map to the connection-failed message."""
+    """Other OSErrors, including a kernel ETIMEDOUT that can come before the deadline, are connection failures."""
     backend, _ = _backend(error)
     with pytest.raises(BackendError) as excinfo:
         backend.chat(investigate_request)
-    assert str(excinfo.value) == "ollama: connection failed" and excinfo.value.__cause__ is None
+    assert str(excinfo.value) == "ollama: connection failed"
+    assert MARKER not in str(excinfo.value) and excinfo.value.__cause__ is None
 
 
 def test_bug_in_transport_propagates(investigate_request):
