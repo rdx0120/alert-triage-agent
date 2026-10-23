@@ -51,14 +51,21 @@ class ChatReply:
     output_tokens: int | None = None
     # True only when the backend reports that the reply stopped at its output limit.
     truncated: bool = False
+    # The backend's reason for stopping, normalized to "stop", "length" or
+    # "other"; None if not reported.
+    finish_reason: str | None = None
 
 
 class BackendError(Exception):
     """The model could not be reached or replied unusably.
 
-    The loop records only that it happened, never the message: it may carry
-    model output or endpoint details.
+    The loop records only that it happened and its error_type, never the
+    message: it may carry model output or endpoint details.
     """
+
+    def __init__(self, *args: object, error_type: str = "_OTHER") -> None:
+        super().__init__(*args)
+        self.error_type = error_type
 
 
 class Backend(Protocol):

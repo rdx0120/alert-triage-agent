@@ -1,11 +1,15 @@
 """The agent loop: limits, tool dispatch, validation and stop reasons."""
 
 import dataclasses
+import hashlib
 import json
+import re
+import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from triage import agent
+from triage import agent, prompt
 from triage.agent import Limits, run_agent
 from triage.backends import BackendError, ChatReply, ChatRequest, HeuristicBackend, ToolCall, serialize_request
 from triage.citations import Citable, check_citations, citable_from_views, generator_schema
@@ -15,10 +19,11 @@ from triage.evidence import EvidenceCollisionError, EvidenceLog
 from triage.ingest import load_alert
 from triage.prompt import (
     CONTEXT_TOKENS, HINT_EMPTY_FIELD, HINT_KEEP, HINT_SOURCE_FORM, HINT_SOURCES_REQUIRED, HINT_UNCITABLE,
-    INVESTIGATION_INSTRUCTION, INVESTIGATION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS, TOOL_RESULT_MAX_BYTES, dumps,
-    enrichment_view, initial_messages, render_assistant, render_result,
+    INVESTIGATION_INSTRUCTION, INVESTIGATION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS, OMISSION_RESERVE_BYTES,
+    TOOL_RESULT_MAX_BYTES, dumps, enrichment_view, initial_messages, render_assistant, render_result,
+    render_result_detail, wire_len,
 )
-from triage.schemas import Alert, DraftSeverity, ModelDraft
+from triage.schemas import AgentResult, Alert, DraftSeverity, ModelCallRecord, ModelDraft, ToolCallRecord
 from triage.tools import registry
 
 SAMPLES = sorted((REPO_ROOT / "samples" / "alerts").glob("*/*.json"))
@@ -728,3 +733,507 @@ def test_truncation_recorded_and_never_acted_on(settings, tools):
     assert result.draft == expected.draft
     assert len(result.model_calls) == len(expected.model_calls) == 3
     assert result.tool_calls == expected.tool_calls == 1
+
+
+# --- Run record ----------------------------------------------------------
+
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+RUN_ID = "0123456789abcdef" * 2
+RUN_LEVEL = ("run_id", "started_at", "duration_s", "enrichment_duration_s", "model", "budget_detail")
+
+
+class CountingTimer:
+    """Returns n * n / 10 on its n-th read (from 0), so every interval has its own length."""
+
+    def __init__(self):
+        self.reads = 0
+
+    def __call__(self):
+        value = self.reads * self.reads / 10
+        self.reads += 1
+        return value
+
+
+class CountingClock:
+    """A deadline clock that never advances and counts its reads."""
+
+    def __init__(self):
+        self.reads = 0
+
+    def __call__(self):
+        self.reads += 1
+        return 0.0
+
+
+def _record_text(result):
+    """Everything the run record adds, as one JSON text."""
+    return json.dumps([[r.model_dump() for r in result.model_calls],
+                       [r.model_dump() for r in result.tool_records],
+                       {k: getattr(result, k) for k in RUN_LEVEL}])
+
+
+def _sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+@pytest.mark.parametrize("second", ["text", "empty"])
+def test_investigation_reply_records(second, settings, tools):
+    """Each investigation reply must be recorded by kind, turn, UTF-8 text size, text digest and finish reason."""
+    text = "Résumé — 東京 \U0001d538" if second == "text" else ""
+    replies = [dataclasses.replace(_calls(_attack("T1003")), finish_reason="stop"),
+               ChatReply(text=text, finish_reason="length"), ChatReply(text=VALID)]
+    result, _ = _run(_powershell(), replies, settings, tools)
+    first, turn2, final = result.model_calls
+    assert [(c.phase, c.turn) for c in result.model_calls] == [("investigate", 1), ("investigate", 2), ("final", None)]
+    assert (first.reply, first.finish_reason) == ("tool_calls", "stop")
+    assert (turn2.reply, turn2.finish_reason) == (second, "length")
+    assert turn2.reply_text_bytes == len(text.encode("utf-8")) and (text == "" or turn2.reply_text_bytes > len(text))
+    assert turn2.reply_sha256 == _sha(text.encode("utf-8"))
+    assert (final.reply, final.finish_reason, final.reply_text_bytes) == ("text", None, len(VALID))
+    assert final.reply_sha256 == _sha(VALID.encode("utf-8"))
+
+
+def test_lone_surrogate_reply_text(settings, tools):
+    """A reply with a lone surrogate must not crash the run; its size and digest use surrogatepass."""
+    text = "bad\ud800text"
+    replies = [ChatReply(text=text), ChatReply(text=text), ChatReply(text=VALID)]
+    result, _ = _run(_powershell(), replies, settings, tools)
+    assert result.stop_reason == "completed"
+    raw = text.encode("utf-8", "surrogatepass")
+    for record in result.model_calls[:2]:
+        assert record.reply == "text"
+        assert record.reply_text_bytes == len(raw) == 10 and record.reply_sha256 == _sha(raw)
+    assert result.model_calls[1].accepted is False
+    result.model_dump_json()
+
+
+def test_request_digest_is_of_the_serialized_request(settings, tools):
+    """Each request digest must be the SHA-256 of the serialize_request() bytes the backend received."""
+    result, backend = _run(_powershell(), _two_turns_then_repair(), settings, tools)
+    assert len(result.model_calls) == len(backend.requests) == 4
+    for record, request in zip(result.model_calls, backend.requests):
+        assert record.request_sha256 == _sha(serialize_request(request))
+    assert len({r.request_sha256 for r in result.model_calls}) == 4
+
+
+def test_tool_only_reply_has_empty_text_digest(settings, tools):
+    """A reply with tool calls and no text must record the empty-string digest, since tool calls are not covered."""
+    result, _ = _run(_powershell(), [_calls(_attack("T1003")), ChatReply(), ChatReply(text=VALID)], settings, tools)
+    record = result.model_calls[0]
+    assert (record.reply, record.reply_text_bytes, record.reply_sha256) == ("tool_calls", 0, EMPTY_SHA256)
+    assert result.model_calls[1].reply == "empty" and result.model_calls[1].reply_sha256 == EMPTY_SHA256
+
+
+def test_final_accepted_record(settings, tools):
+    """An accepted final reply must be recorded as accepted with no problems; investigation calls record neither."""
+    result, _ = _run(_powershell(), [ChatReply(), ChatReply(text=VALID)], settings, tools)
+    investigate, final = result.model_calls
+    assert (final.accepted, final.problems) == (True, [])
+    assert (investigate.accepted, investigate.problems) == (None, None)
+    assert result.validation_errors == []
+
+
+def test_repair_path_records(settings, tools):
+    """A rejected final reply must record its sanitized problems and the accepted repair must record none."""
+    replies = [ChatReply(), _draft_citing(FABRICATED), _draft_citing("rule_level")]
+    result, _ = _run(_powershell(), replies, settings, tools)
+    assert result.stop_reason == "completed"
+    final, repair = result.model_calls[1:]
+    assert final.accepted is False and "severity.sources.0: uncitable_evidence_id" in final.problems
+    assert (repair.accepted, repair.problems) == (True, [])
+
+
+def test_invalid_output_records(settings, tools):
+    """When both replies are rejected, both records must say so and validation_errors must be the last problems."""
+    replies = [ChatReply(), ChatReply(text=_invalid_with_marker()), _draft_citing("rule_level", FABRICATED)]
+    result, _ = _run(_powershell(), replies, settings, tools)
+    assert result.stop_reason == "invalid_output"
+    final, repair = result.model_calls[1:]
+    assert final.accepted is False and repair.accepted is False
+    assert final.problems == ["<unknown>: extra_forbidden", "severity.rationale: string_too_long"]
+    assert result.validation_errors == repair.problems == ["severity.sources.1: uncitable_evidence_id"]
+
+
+def test_recorded_problems_are_capped(settings, tools):
+    """Recorded problems must be capped like the repair message, never the full list."""
+    bad = json.dumps({"missing_data": [{"kind": "x", "description": "d", "sources": ["event"]}] * 10})
+    result, _ = _run(_powershell(), [ChatReply(), ChatReply(text=bad), ChatReply(text=VALID)], settings, tools)
+    problems = result.model_calls[1].problems
+    assert len(problems) == 11 and problems[-1] == "and 3 more"
+
+
+def _deadline_before_request(settings, tools, monkeypatch):
+    times = [0.0]
+    clock = lambda: times.pop(0) if times else 901.0  # noqa: E731
+    return _run(_powershell(), [ChatReply(text=VALID)], settings, tools, clock=clock)[0]
+
+
+def _over_context_budget(settings, tools, monkeypatch):
+    monkeypatch.setattr(agent, "CONTEXT_TOKENS", 4_000)
+    return _run(_powershell(), [ChatReply(text=VALID)], settings, tools)[0]
+
+
+def _deadline_during_request(settings, tools, monkeypatch):
+    clock = FakeClock()
+    return run_agent(_powershell(), ClockBackend(clock, 901.0, BackendError(MARKER)), settings=settings,
+                     tools=tools, clock=clock)
+
+
+def _deadline_after_reply(settings, tools, monkeypatch):
+    clock = FakeClock()
+    return run_agent(_powershell(), ClockBackend(clock, 901.0, ChatReply(text=VALID)), settings=settings,
+                     tools=tools, limits=Limits(max_tool_calls=0), clock=clock)
+
+
+@pytest.mark.parametrize("stop,detail", [
+    (_deadline_before_request, "deadline_before_request"),
+    (_over_context_budget, "request_over_context_budget"),
+    (_deadline_during_request, "deadline_during_request"),
+    (_deadline_after_reply, "deadline_after_reply"),
+], ids=lambda v: v if isinstance(v, str) else "")
+def test_budget_stops_record_which_limit(stop, detail, monkeypatch, settings, tools):
+    """Every budget stop must record which limit stopped it."""
+    result = stop(settings, tools, monkeypatch)
+    assert result.stop_reason == "budget_exceeded" and result.budget_detail == detail
+
+
+@pytest.mark.parametrize("replies,reason", [
+    ([ChatReply(), ChatReply(text=VALID)], "completed"),
+    ([BackendError("boom")], "backend_error"),
+    ([ChatReply(), ChatReply(text="x"), ChatReply(text="y")], "invalid_output"),
+])
+def test_other_stops_have_no_budget_detail(replies, reason, settings, tools):
+    """A run that did not stop on a budget must not record a budget detail."""
+    result, _ = _run(_powershell(), replies, settings, tools)
+    assert result.stop_reason == reason and result.budget_detail is None
+
+
+def test_budget_detail_rejected_on_other_stops(settings, tools):
+    """The result model must reject a budget detail on any stop reason but budget_exceeded."""
+    stopped, _ =_run(_powershell(), [BackendError("boom")], settings, tools)
+    completed, _ = _run(_powershell(), [ChatReply(), ChatReply(text=VALID)], settings, tools)
+    detail = {"budget_detail": "deadline_after_reply"}
+    for reason in ("backend_error", "invalid_output"):
+        with pytest.raises(ValueError, match="budget_detail"):
+            AgentResult.model_validate({**stopped.model_dump(), "stop_reason": reason, **detail})
+    with pytest.raises(ValueError, match="budget_detail"):
+        AgentResult.model_validate({**completed.model_dump(), **detail})
+    accepted = AgentResult.model_validate({**stopped.model_dump(), "stop_reason": "budget_exceeded", **detail})
+    assert accepted.budget_detail == "deadline_after_reply"
+
+
+@pytest.mark.parametrize("error,expected", [
+    (BackendError(f"boom {MARKER}", error_type="timeout"), "timeout"),
+    (BackendError(f"boom {MARKER}", error_type="workers_busy"), "workers_busy"),
+    (BackendError(f"boom {MARKER}", error_type=f"made_up_{MARKER}"), "_OTHER"),
+    (BackendError(f"boom {MARKER}"), "_OTHER"),
+], ids=["timeout", "workers_busy", "unknown", "default"])
+def test_backend_error_type_recorded(error, expected, settings, tools):
+    """A failed call must record a closed error type, never the error's message or an unlisted type."""
+    result, _ = _run(_powershell(), [ChatReply(), error], settings, tools)
+    assert result.stop_reason == "backend_error"
+    failed = result.model_calls[-1]
+    assert failed.error_type == expected
+    assert (failed.reply, failed.reply_text_bytes, failed.reply_sha256, failed.finish_reason) == (None,) * 4
+    assert failed.duration_s is not None
+    assert result.model_calls[0].error_type is None
+    assert MARKER not in _record_text(result)
+
+
+def test_timing_from_injected_timer_and_clocks(settings, tools):
+    """Offsets and durations must come from the injected timer, rounded, in the order the run did things."""
+    replies = [_calls(_attack("T1003")), ChatReply(), ChatReply(text=VALID)]
+    wall = datetime(2026, 1, 2, 5, 4, 5, 678901, tzinfo=timezone(timedelta(hours=2)))
+    timer = CountingTimer()
+    result, _ = _run(_powershell(), replies, settings, tools, timer=timer, wall_clock=lambda: wall, run_id=RUN_ID)
+    # Reads: run start, enrichment start and end, then a start and end per
+    # model call and per lookup, then the end of the run.
+    assert timer.reads == 12
+    assert result.enrichment_duration_s == 0.3
+    assert [(c.start_s, c.duration_s) for c in result.model_calls] == [(0.9, 0.7), (4.9, 1.5), (8.1, 1.9)]
+    (lookup,) = [r for r in result.tool_records if r.requested_by == "model"]
+    assert (lookup.start_s, lookup.duration_s) == (2.5, 1.1)
+    assert all((r.start_s, r.duration_s) == (None, None) for r in result.tool_records if r.turn == 0)
+    assert result.duration_s == 12.1
+    assert result.started_at == "2026-01-02T03:04:05.678Z"
+    assert result.run_id == RUN_ID
+
+
+def test_run_id_generated_per_run(settings, tools):
+    """Without an injected run ID, each run must get its own 32-hex-character ID."""
+    ids = [run_agent(_powershell(), HeuristicBackend(), settings=settings, tools=tools).run_id for _ in range(2)]
+    assert all(re.fullmatch(r"[0-9a-f]{32}", i) for i in ids) and ids[0] != ids[1]
+
+
+def test_started_at_from_real_wall_clock(settings, tools):
+    """The default start time must be UTC with milliseconds and a Z suffix."""
+    result = run_agent(_powershell(), HeuristicBackend(), settings=settings, tools=tools)
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", result.started_at)
+    assert result.model is None and result.duration_s >= 0
+
+
+@pytest.mark.parametrize("timer", [time.monotonic, CountingTimer(), lambda: -1e9],
+                         ids=["monotonic", "counting", "constant"])
+@pytest.mark.parametrize("replies", [
+    [ChatReply(), ChatReply(text=VALID)],
+    [_calls(_attack("T1003")), _calls(_attack("T1005")), ChatReply(), ChatReply(text="x"), ChatReply(text=VALID)],
+    [ChatReply(), BackendError("boom")],
+], ids=["two_calls", "five_calls", "backend_error"])
+def test_deadline_clock_reads_unchanged(replies, timer, settings, tools):
+    """The deadline clock must be read once, then twice per model call, whatever the timer does."""
+    clock = CountingClock()
+    result, _ = _run(_powershell(), replies, settings, tools, clock=clock, timer=timer)
+    assert clock.reads == 1 + 2 * len(result.model_calls)
+
+
+def test_heuristic_run_clock_reads(settings, tools):
+    """A two-call baseline run must read the deadline clock five times, as before the run record."""
+    clock = CountingClock()
+    result = run_agent(_powershell(), HeuristicBackend(), settings=settings, tools=tools, clock=clock)
+    assert len(result.model_calls) == 2 and clock.reads == 5
+
+
+def test_timer_is_observational_only(settings, tools):
+    """Two different timers must give the same outcome, draft, requests and number of calls."""
+    replies = [_calls(_attack("T1003")), ChatReply(), ChatReply(text="nope"), ChatReply(text=VALID)]
+    runs = [_run(_powershell(), list(replies), settings, tools, timer=t) for t in (CountingTimer(), lambda: 1e12)]
+    (first, first_backend), (second, second_backend) = runs
+    assert first.stop_reason == second.stop_reason == "completed"
+    assert first.draft == second.draft
+    assert [c.request_bytes for c in first.model_calls] == [c.request_bytes for c in second.model_calls]
+    assert _sent(first_backend) == _sent(second_backend)
+    assert len(first.model_calls) == len(second.model_calls) == 4
+
+
+def test_enrichment_and_model_tool_records(settings, tools):
+    """Lookups must be recorded in order with who asked, the turn and repeats; dropped calls get no record."""
+    replies = [_calls(_attack("T1003"), _attack("T1059.001"), _attack("T1005"), _attack("T1012")),
+               _calls(_attack("T1016"), ("delete_host", {"host": "CLINIC-BILL01"})), ChatReply(),
+               ChatReply(text=VALID)]
+    result, _ = _run(_powershell(), replies, settings, tools)
+    assert result.stop_reason == "completed" and result.model_calls[0].tool_calls_dropped == 1
+    enrichment = [r for r in result.tool_records if r.requested_by == "enrichment"]
+    assert [(r.evidence_id, r.tool, r.status) for r in enrichment] == \
+        [(e.evidence_id, e.tool, e.status) for e in result.enrichment.evidence]
+    assert all(r.turn == 0 and not r.repeat for r in enrichment)
+    model = result.tool_records[len(enrichment):]
+    assert all(r.requested_by == "model" for r in model)
+    eid = registry.evidence_id
+    assert [(r.evidence_id, r.turn, r.repeat) for r in model] == [
+        (eid("attack_lookup", {"technique_id": "T1003"}), 1, False),
+        (eid("attack_lookup", {"technique_id": "T1059.001"}), 1, True),
+        (eid("attack_lookup", {"technique_id": "T1005"}), 1, False),
+        (eid("attack_lookup", {"technique_id": "T1016"}), 2, False),
+        (eid("delete_host", {"host": "CLINIC-BILL01"}), 2, False),
+    ]
+    assert len(model) == result.tool_calls == 5
+    assert result.evidence_origin[model[1].evidence_id] == "enrichment"
+    assert eid("attack_lookup", {"technique_id": "T1012"}) not in {r.evidence_id for r in result.tool_records}
+    # The record carries the gateway's status for a name outside the allow-list.
+    unoffered = model[-1]
+    assert unoffered.tool == "delete_host" and unoffered.status == result.evidence[-1].status == "error"
+
+
+def test_invalid_input_lookup_recorded(settings, tools):
+    """A lookup the gateway rejects for its arguments must be recorded with status invalid_input."""
+    result, _ = _run(_powershell(), [_calls(("attack_lookup", ["T1003"])), ChatReply(), ChatReply(text=VALID)],
+                     settings, tools)
+    assert result.tool_records[-1].status == "invalid_input" and result.tool_records[-1].view == "full"
+
+
+def _sized_runbooks(tools):
+    """runbook_search returning constructed data chosen by the query."""
+    data = {
+        "big": {"hits": [{"text": "a" * 300}, {"text": "b" * 300}, {"text": "c" * 300}, {"text": "d" * 300},
+                         {"text": "short one"}, {"text": "short two"}]},
+        "small": {"hits": [{"text": "small"}]},
+        "huge": {"hits": [{"text": f"{i:02d}" + "x" * 98} for i in range(40)]},
+    }
+    original = tools["runbook_search"].func
+
+    def func(args):
+        return data[args.query] if args.query in data else original(args)
+
+    return {**tools, "runbook_search": dataclasses.replace(tools["runbook_search"], func=func)}
+
+
+def _strings(value):
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def test_model_lookup_views(settings, tools):
+    """Each model-requested result must record how it was shown: capped, in full or as a stub."""
+    sized = _sized_runbooks(tools)
+    replies = [_calls(*(("runbook_search", {"query": q}) for q in ("big", "small", "huge"))), ChatReply(),
+               ChatReply(text=VALID)]
+    result, backend = _run(_powershell(), replies, settings, sized)
+    big, small, huge = result.tool_records[-3:]
+    big_result = next(r for r in result.evidence if r.evidence_id == big.evidence_id)
+    assert render_result_detail(big_result, TOOL_RESULT_MAX_BYTES)[1] == 128
+    longer = [s for s in _strings(big_result.data) if len(s.encode("utf-8")) > 128]
+    assert len(longer) == 4
+    assert (big.view, big.view_string_cap, big.view_strings_cut) == ("capped", 128, 4)
+    assert (small.view, small.view_string_cap, small.view_strings_cut) == ("full", 512, 0)
+    assert (huge.view, huge.view_string_cap, huge.view_strings_cut) == ("omitted", None, None)
+    # view_bytes is the rendered result's size as the budget measures it,
+    # and that rendered result is the tool message the model was sent.
+    tool_messages = [m for m in backend.requests[1].messages if m["role"] == "tool"]
+    assert [wire_len(m["content"]) for m in tool_messages] == [big.view_bytes, small.view_bytes, huge.view_bytes]
+    assert json.loads(tool_messages[2]["content"]).get("data_omitted") is True
+
+
+def test_enrichment_lookup_not_shown(settings, tools):
+    """A non-ok enrichment lookup is never shown as a result and must be recorded as not_shown."""
+    result = run_agent(_no_host_with(host="CLINIC-LAB99"), HeuristicBackend(), settings=settings, tools=tools)
+    records = {r.evidence_id: r for r in result.tool_records}
+    failed = [e for e in result.enrichment.evidence if e.status != "ok"]
+    assert failed
+    for e in failed:
+        record = records[e.evidence_id]
+        assert (record.view, record.view_string_cap, record.view_strings_cut, record.view_bytes) == \
+            ("not_shown", None, None, None)
+    for e in result.enrichment.evidence:
+        if e.status == "ok":
+            assert records[e.evidence_id].view in ("full", "capped")
+
+
+def _no_host_with(**fields):
+    return Alert(**{**_no_host().model_dump(), **fields})
+
+
+def test_enrichment_view_matched_by_evidence_id(monkeypatch, settings, tools):
+    """Results the packed enrichment view shows must be matched by evidence ID; one left out is not_shown."""
+    alert = _no_host_with(host="CLINIC-BILL01")
+    enrichment = run_agent(alert, HeuristicBackend(), settings=settings, tools=tools).enrichment
+    assert all(e.status == "ok" for e in enrichment.evidence) and len(enrichment.evidence) >= 3
+    full = enrichment_view(enrichment)
+    monkeypatch.setattr(prompt, "ENRICHMENT_VIEW_MAX_BYTES", wire_len(dumps(full)) + OMISSION_RESERVE_BYTES - 1)
+    view = enrichment_view(enrichment)
+    assert view["_omitted_results"] == 1
+    result = run_agent(alert, HeuristicBackend(), settings=settings, tools=tools)
+    assert json.loads(initial_messages(alert, result.enrichment)[1]["content"])["enrichment"] == view
+    shown = {r["evidence_id"]: r for r in view["results"]}
+    records = [r for r in result.tool_records if r.requested_by == "enrichment"]
+    left_out = enrichment.evidence[-1].evidence_id
+    assert left_out not in shown and [r.evidence_id for r in records][-1] == left_out
+    for record in records:
+        if record.evidence_id in shown:
+            assert record.view in ("full", "capped")
+            assert record.view_bytes == wire_len(dumps(shown[record.evidence_id]))
+        else:
+            assert record.evidence_id == left_out and record.view == "not_shown"
+
+
+def test_run_record_never_holds_untrusted_text(settings, tools):
+    """No recorded field may hold alert text, tool arguments, reply text or a backend error message."""
+    event = {"CommandLine": f"powershell -enc {MARKER}", MARKER: MARKER}
+    alert = Alert(alert_id="p-1", source="synthetic", rule_id="r-1", rule_title=f"Rule {MARKER}",
+                  rule_level="high", rule_tags=["attack.t1059.001"], host=MARKER, user=f"user {MARKER}",
+                  timestamp=f"2026 {MARKER}", event=event)
+    lookups = _calls(("attack_lookup", {"technique_id": MARKER}), ("runbook_search", {"query": f"q {MARKER}"}),
+                     ("asset_lookup", {"host": MARKER}))
+    replies = [dataclasses.replace(lookups, text=MARKER), ChatReply(text=f"done {MARKER}"),
+               ChatReply(text=_invalid_with_marker()), BackendError(f"ollama: {MARKER}", error_type=MARKER)]
+    result, backend = _run(alert, replies, settings, tools)
+    assert result.stop_reason == "backend_error"
+    assert any(MARKER in text for text in _sent(backend))   # the marker did reach the model
+    assert [c.reply for c in result.model_calls] == ["tool_calls", "text", "text", None]
+    assert result.model_calls[-1].error_type == "_OTHER"
+    assert len([r for r in result.tool_records if r.requested_by == "model"]) == 3
+    assert MARKER not in _record_text(result)
+    assert MARKER.lower() not in _record_text(result).lower()
+
+
+@pytest.mark.parametrize("returned,recorded", [
+    ("stop", "stop"), ("length", "length"), (f"weird {MARKER}\nreason", "other"), (["stop"], None), (None, None),
+], ids=["stop", "length", "unlisted", "list", "none"])
+def test_finish_reason_recorded_from_closed_set(returned, recorded, settings, tools):
+    """Whatever a backend returns as finish reason, the record must hold only a listed value or None."""
+    replies = [ChatReply(finish_reason=returned), ChatReply(text=VALID, finish_reason=returned)]
+    result, _ = _run(_powershell(), replies, settings, tools)
+    assert result.stop_reason == "completed"
+    assert [c.finish_reason for c in result.model_calls] == [recorded, recorded]
+    assert MARKER not in _record_text(result)
+
+
+def _completed_with_lookup(settings, tools, monkeypatch):
+    replies = [_calls(_attack("T1003"), ("asset_lookup", {"host": "nope"})), ChatReply(), ChatReply(text=VALID)]
+    return _run(_powershell(), replies, settings, tools)[0]
+
+
+def _repaired(settings, tools, monkeypatch):
+    return _run(_powershell(), [ChatReply(), _draft_citing(FABRICATED), _draft_citing("rule_level")],
+                settings, tools)[0]
+
+
+def _invalid_output(settings, tools, monkeypatch):
+    replies = [ChatReply(), ChatReply(text=_invalid_with_marker()), _draft_citing("rule_level", FABRICATED)]
+    return _run(_powershell(), replies, settings, tools)[0]
+
+
+def _backend_error(settings, tools, monkeypatch):
+    return _run(_powershell(), [_calls(_attack("T1003")), BackendError("boom", error_type="timeout")],
+                settings, tools)[0]
+
+
+@pytest.mark.parametrize("scenario,reason", [
+    (_completed_with_lookup, "completed"),
+    (_repaired, "completed"),
+    (_invalid_output, "invalid_output"),
+    (_backend_error, "backend_error"),
+    (_deadline_before_request, "budget_exceeded"),
+    (_over_context_budget, "budget_exceeded"),
+    (_deadline_during_request, "budget_exceeded"),
+    (_deadline_after_reply, "budget_exceeded"),
+], ids=["completed", "repair", "invalid_output", "backend_error", "deadline_before_request",
+        "request_over_context_budget", "deadline_during_request", "deadline_after_reply"])
+def test_records_validate_against_their_schema(scenario, reason, monkeypatch, settings, tools):
+    """Fields are assigned after construction without validation, so every record must still validate."""
+    result = scenario(settings, tools, monkeypatch)
+    assert result.stop_reason == reason
+    for record in result.model_calls:
+        assert ModelCallRecord.model_validate(record.model_dump()) == record
+    for record in result.tool_records:
+        assert ToolCallRecord.model_validate(record.model_dump()) == record
+
+
+class CountingCalls:
+    """Counts its calls and returns a fixed value."""
+
+    def __init__(self, value):
+        self.value = value
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        return self.value
+
+
+@pytest.mark.parametrize("run_id", [
+    "NOT-HEX", "0" * 31, "0" * 33, RUN_ID.upper(), "", RUN_ID + "\n", 12345, RUN_ID[:19] + MARKER,
+], ids=["not_hex", "31_chars", "33_chars", "uppercase", "empty", "trailing_newline", "not_a_string", "marker"])
+def test_malformed_run_id_rejected_before_any_work(run_id, monkeypatch, settings, tools):
+    """A malformed injected run ID must be rejected before any clock read, lookup or model call."""
+    spy = CountingCalls(None)
+    monkeypatch.setattr(registry, "run_tool", spy)
+    clock, timer = CountingClock(), CountingTimer()
+    wall_clock = CountingCalls(datetime(2026, 1, 1, tzinfo=timezone.utc))
+    backend = ScriptedBackend([ChatReply(), ChatReply(text=VALID)])
+    with pytest.raises(ValueError, match="run_id") as raised:
+        run_agent(_powershell(), backend, settings=settings, tools=tools, clock=clock, timer=timer,
+                  wall_clock=wall_clock, run_id=run_id)
+    assert backend.requests == [] and spy.calls == 0
+    assert (clock.reads, timer.reads, wall_clock.calls) == (0, 0, 0)
+    assert MARKER not in str(raised.value) and (run_id == "" or str(run_id) not in str(raised.value))
+
+
+def test_valid_injected_run_id_kept(settings, tools):
+    """A well-formed injected run ID must be used as given."""
+    result = run_agent(_powershell(), HeuristicBackend(), settings=settings, tools=tools, run_id=RUN_ID)
+    assert result.stop_reason == "completed" and result.run_id == RUN_ID

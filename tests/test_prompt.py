@@ -183,6 +183,44 @@ def test_worst_non_ok_result_fits_tool_result_cap():
     assert wire_len(dumps(render_result(worst, TOOL_RESULT_MAX_BYTES))) <= TOOL_RESULT_MAX_BYTES
 
 
+def _head(result):
+    return {"evidence_id": result.evidence_id, "tool": result.tool, "status": result.status}
+
+
+def test_render_result_detail_matches_render_result_at_every_tier(tools):
+    """render_result_detail() must render exactly what render_result() does and return the tier it used."""
+    result = _runbook_result(tools)
+    sizes = [wire_len(dumps({**_head(result), "data": cap_strings(result.data, t)})) for t in RESULT_STRING_TIERS]
+    assert sizes == sorted(sizes, reverse=True) and len(set(sizes)) == len(sizes)
+    for tier, size in zip(RESULT_STRING_TIERS, sizes):
+        rendered, cap = prompt.render_result_detail(result, size)
+        assert cap == tier and rendered == render_result(result, size)
+        assert rendered["data"] == cap_strings(result.data, tier)
+    stub, cap = prompt.render_result_detail(result, sizes[-1] - 1)
+    assert cap is None and stub == render_result(result, sizes[-1] - 1) and stub["data_omitted"] is True
+
+
+def test_render_result_detail_non_ok():
+    """A non-ok result must render as before, with the error string cap returned."""
+    result = ToolResult(evidence_id="attack_lookup:0123456789abcdef", tool="attack_lookup",
+                        args={}, status="error", error="E" * 1000)
+    rendered, cap = prompt.render_result_detail(result, TOOL_RESULT_MAX_BYTES)
+    assert cap == prompt.ERROR_STRING_MAX_BYTES == 120
+    assert rendered == render_result(result, TOOL_RESULT_MAX_BYTES)
+    assert prompt.strings_cut(result.error, rendered["error"]) == 1
+
+
+def test_strings_cut_counts_nested_strings():
+    """strings_cut() must count every shortened string in nested dicts and lists, and nothing else."""
+    original = {"a": "x" * 10, "b": ["short", "y" * 10, {"c": "z" * 10, "d": 5, "e": None}], "f": ("w" * 10,),
+                "g": True}
+    assert prompt.strings_cut(original, cap_strings(original, 8)) == 4
+    assert prompt.strings_cut(original, cap_strings(original, 512)) == 0
+    assert prompt.strings_cut(original, original) == 0
+    assert prompt.strings_cut({"k": "ok\ud800"}, cap_strings({"k": "ok\ud800"}, 512)) == 1   # clean() counts
+    assert prompt.strings_cut(None, "") == 0
+
+
 def test_render_result_never_contains_arguments(tools):
     """Arguments may hold alert text the model copied; they are never shown back."""
     result = _runbook_result(tools, query=f"powershell encoded {MARKER}")

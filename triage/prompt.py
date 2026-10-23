@@ -260,18 +260,42 @@ def enrichment_view(enrichment: Enrichment) -> dict:
 
 
 def render_result(result: ToolResult, max_bytes: int) -> dict:
-    """A tool result as the model sees it, within max_bytes.
+    """A tool result as the model sees it, within max_bytes."""
+    return render_result_detail(result, max_bytes)[0]
 
-    Arguments are never rendered: they may contain alert text the model copied.
+
+def render_result_detail(result: ToolResult, max_bytes: int) -> tuple[dict, int | None]:
+    """render_result() and the string cap it used.
+
+    The cap is the tier for ok data, ERROR_STRING_MAX_BYTES for a non-ok
+    result and None for a data_omitted stub. Arguments are never rendered:
+    they may contain alert text the model copied.
     """
     head = {"evidence_id": result.evidence_id, "tool": result.tool, "status": result.status}
     if result.status != "ok":
-        return {**head, "error": cap_strings(result.error or "", ERROR_STRING_MAX_BYTES)}
+        error = cap_strings(result.error or "", ERROR_STRING_MAX_BYTES)
+        return {**head, "error": error}, ERROR_STRING_MAX_BYTES
     for tier in RESULT_STRING_TIERS:
         rendered = {**head, "data": cap_strings(result.data, tier)}
         if wire_len(dumps(rendered)) <= max_bytes:
-            return rendered
-    return {**head, "data_omitted": True}
+            return rendered, tier
+    return {**head, "data_omitted": True}, None
+
+
+def strings_cut(original: Any, rendered: Any) -> int:
+    """The number of strings in original whose counterpart in rendered differs.
+
+    Walks dict values and list items in order, as cap_strings() builds them.
+    A lone surrogate replaced by clean() also counts as a change; that is
+    accepted.
+    """
+    if isinstance(original, str):
+        return int(original != rendered)
+    if isinstance(original, dict):
+        return sum(strings_cut(o, r) for o, r in zip(original.values(), rendered.values()))
+    if isinstance(original, (list, tuple)):
+        return sum(strings_cut(o, r) for o, r in zip(original, rendered))
+    return 0
 
 
 def render_assistant(tool_calls: list[ToolCall]) -> dict:

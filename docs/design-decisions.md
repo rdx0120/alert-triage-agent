@@ -412,3 +412,38 @@ for its tool calls is cut off, and its tool calls may be lost; the truncation
 record shows how often that happens, and the limit is revisited from real-model
 observations. The instruction can be ignored by a model; the output limit still
 bounds the cost.
+
+---
+
+## DD-017: Each run records what it did, as metadata
+
+**Context.** An audit log is planned (README, Security controls). It needs to
+know, for each run, every model call and lookup in order: timing, size, why a
+reply ended, whether it was accepted and why not, and how each lookup result
+reached the model. Private runs on synthetic samples showed these are the facts
+needed to judge a run, including investigation turns that write text instead of
+calling a tool, replies cut at the output limit, and runbook results shortened
+in the prompt.
+
+**Decision.** The agent loop records this on `AgentResult` and never writes
+files. Each model call records its turn, timing, a SHA-256 digest of the
+prompt as the context budget measures it (messages, tool specs and schema, not
+the full HTTP body), the backend's finish reason, the kind and size of the
+reply with a digest of its text (not its tool calls), the validation outcome
+with the sanitized problems, and,
+when the call failed, an error type from a closed list. Each lookup records who
+requested it, its status, whether it was a repeat, and whether its result was
+shown in full, with shortened strings (and at which cap), as a stub, or not at
+all. The run records its ID, start time, durations, model name and, for a
+budget stop, which limit stopped it. Timing uses a separate clock from the
+deadlines, so measuring cannot change when a run stops. No field holds alert
+text, prompt text, model text, tool arguments or tool data, and error messages
+are still never kept.
+
+**Consequences.** Every run can be reviewed afterwards without re-running it,
+and the audit log becomes a projection of this record. Digests let someone
+holding a separate transcript check which prompt and reply text a run used;
+they do not prove the full HTTP request or the reply's tool calls. Model
+text that is never kept cannot be inspected later; capturing content is a
+separate, opt-in decision. The fields are observational only: control flow,
+limits and acceptance do not read them.
