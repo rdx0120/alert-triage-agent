@@ -85,7 +85,7 @@ service.
 | Severity floor: final severity never below the detection rule's level | Injection downgrading an alert | Planned |
 | Draft citations restricted to evidence shown in this run and checked before a draft is accepted; unknown-tool errors and evidence left out of the prompt are not citable | Fabricated provenance | Implemented |
 | ATT&CK ID allow-list on output; citation relevance | Hallucinated findings | Planned |
-| Model-call, tool-call and time limits; prompts bounded in bytes so they fit the context window, with output space reserved | Unbounded consumption; silent context truncation | Implemented |
+| Model-call, tool-call and time limits; prompts bounded in bytes so they fit the context window, with output space reserved; investigation turns limited to 384 output tokens | Unbounded consumption; silent context truncation | Implemented |
 | Model-requested lookups recorded separately from enrichment | Untraceable model-steered evidence | Implemented |
 | Model endpoint must be an `http(s)` URL without credentials, path or query; no proxy or redirect handling; TLS verified | Alert data sent somewhere unintended | Implemented |
 | Hard per-request deadline (never more than the time left in the run), bounded worker threads, 1 MiB reply cap; malformed replies are backend errors | Hung or hostile model endpoint | Implemented |

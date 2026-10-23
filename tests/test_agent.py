@@ -15,7 +15,8 @@ from triage.evidence import EvidenceCollisionError, EvidenceLog
 from triage.ingest import load_alert
 from triage.prompt import (
     CONTEXT_TOKENS, HINT_EMPTY_FIELD, HINT_KEEP, HINT_SOURCE_FORM, HINT_SOURCES_REQUIRED, HINT_UNCITABLE,
-    MAX_OUTPUT_TOKENS, TOOL_RESULT_MAX_BYTES, enrichment_view, render_result,
+    INVESTIGATION_INSTRUCTION, INVESTIGATION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS, TOOL_RESULT_MAX_BYTES, dumps,
+    enrichment_view, initial_messages, render_assistant, render_result,
 )
 from triage.schemas import Alert, DraftSeverity, ModelDraft
 from triage.tools import registry
@@ -650,3 +651,80 @@ def test_final_requests_carry_this_runs_schema(settings, tools):
         # citable is never sent: the serialized request is the same without it.
         assert serialize_request(request) == serialize_request(dataclasses.replace(request, citable=None))
         assert set(json.loads(serialize_request(request))) == {"messages", "tools", "format"}
+
+
+# --- Investigation requests and truncation -------------------------------
+
+INSTRUCTION = {"role": "user", "content": INVESTIGATION_INSTRUCTION}
+
+
+def _two_turns_then_repair():
+    """Two investigation turns (one lookup, then none), a rejected final reply and a valid repair."""
+    return [_calls(_attack("T1003")), ChatReply(), ChatReply(text="nope"), ChatReply(text=VALID)]
+
+
+def test_output_limit_per_phase(settings, tools):
+    """Investigation requests must reserve the smaller limit; final and repair keep the full one."""
+    result, backend = _run(_powershell(), _two_turns_then_repair(), settings, tools)
+    assert [c.phase for c in result.model_calls] == ["investigate", "investigate", "final", "repair"]
+    assert [r.max_output_tokens for r in backend.requests] == [INVESTIGATION_MAX_OUTPUT_TOKENS] * 2 + [
+        MAX_OUTPUT_TOKENS] * 2
+    assert (INVESTIGATION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS) == (384, 1_024)
+
+
+def test_investigation_instruction_never_stored(settings, tools):
+    """The instruction must end each investigation request once and never enter the history."""
+    result, backend = _run(_powershell(), _two_turns_then_repair(), settings, tools)
+    first, second, final, repair = backend.requests
+    for request in (first, second):
+        assert request.messages[-1] == INSTRUCTION
+        assert request.messages.count(INSTRUCTION) == 1
+    # The second turn's history is the first turn's plus the lookup, without the first copy.
+    assert second.messages[:len(first.messages) - 1] == first.messages[:-1]
+    assert [m["role"] for m in second.messages[len(first.messages) - 1:]] == ["assistant", "tool", "user"]
+    for request in (final, repair):
+        assert INSTRUCTION not in request.messages
+        assert INVESTIGATION_INSTRUCTION not in serialize_request(request).decode("utf-8")
+
+
+def test_final_and_repair_requests_unchanged(settings, tools):
+    """Final and repair requests must be byte-identical to ones built from the history alone."""
+    alert = _powershell()
+    result, backend = _run(alert, _two_turns_then_repair(), settings, tools)
+    assert result.stop_reason == "completed"
+    final, repair = backend.requests[2:]
+    # The history rebuilt independently of the loop: the initial messages,
+    # the accepted lookup and its result, then the final instruction.
+    lookup = registry.evidence_id("attack_lookup", {"technique_id": "T1003"})
+    found = next(r for r in result.evidence if r.evidence_id == lookup)
+    history = initial_messages(alert, result.enrichment) + [
+        render_assistant([ToolCall("attack_lookup", {"technique_id": "T1003"})]),
+        {"role": "tool", "tool_name": "attack_lookup", "content": dumps(render_result(found, TOOL_RESULT_MAX_BYTES))},
+        {"role": "user", "content": agent.FINAL_INSTRUCTION},
+    ]
+    repair_history = history + [{"role": "user", "content": agent.repair_message(["(root): json_invalid"])}]
+    for request, messages in ((final, history), (repair, repair_history)):
+        expected = ChatRequest(messages=messages, tools=None, response_schema=generator_schema(request.citable),
+                               max_output_tokens=MAX_OUTPUT_TOKENS, context_tokens=CONTEXT_TOKENS,
+                               timeout_s=request.timeout_s, alert=alert, enrichment=result.enrichment)
+        assert serialize_request(request) == serialize_request(expected)
+        assert request.max_output_tokens == MAX_OUTPUT_TOKENS
+        assert agent.token_bound(request) == agent.token_bound(expected)
+
+
+def _truncated(reply):
+    return dataclasses.replace(reply, truncated=True)
+
+
+def test_truncation_recorded_and_never_acted_on(settings, tools):
+    """A truncated reply must be recorded without changing the run's outcome, draft or calls."""
+    plain = [_calls(_attack("T1003")), ChatReply(), ChatReply(text=VALID)]
+    cut = [_truncated(plain[0]), plain[1], _truncated(plain[2])]
+    expected, _ = _run(_powershell(), plain, settings, tools)
+    result, _ = _run(_powershell(), cut, settings, tools)
+    assert [c.truncated for c in expected.model_calls] == [False, False, False]
+    assert [c.truncated for c in result.model_calls] == [True, False, True]
+    assert result.stop_reason == expected.stop_reason == "completed"
+    assert result.draft == expected.draft
+    assert len(result.model_calls) == len(expected.model_calls) == 3
+    assert result.tool_calls == expected.tool_calls == 1

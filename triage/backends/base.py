@@ -49,6 +49,8 @@ class ChatReply:
     tool_calls: list[ToolCall] = field(default_factory=list)
     input_tokens: int | None = None
     output_tokens: int | None = None
+    # True only when the backend reports that the reply stopped at its output limit.
+    truncated: bool = False
 
 
 class BackendError(Exception):

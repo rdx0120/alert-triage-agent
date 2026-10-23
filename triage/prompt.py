@@ -24,6 +24,10 @@ from .tools.registry import Tool
 # worst-case test in tests/test_prompt.py proves they fit together.
 CONTEXT_TOKENS = 32_768
 MAX_OUTPUT_TOKENS = 1_024
+# Investigation replies are tool calls; a turn that writes text instead is
+# discarded, so it gets a smaller output limit. 384 leaves room for three
+# tool calls with long arguments.
+INVESTIGATION_MAX_OUTPUT_TOKENS = 384
 TEMPLATE_TOKENS_BASE = 256
 TEMPLATE_TOKENS_PER_MESSAGE = 16
 TEMPLATE_TOKENS_PER_TOOL = 32
@@ -70,6 +74,13 @@ SYSTEM_PROMPT = (
     "cannot be determined, "
     "list it under missing_data instead of guessing. Containment actions are "
     "suggestions that a human must approve."
+)
+
+# Sent with investigation requests only and never stored in the history,
+# so final and repair requests (and their context budget) are unchanged.
+INVESTIGATION_INSTRUCTION = (
+    "Investigation step: use tool calls only. If no further lookup is "
+    "needed, return no tool calls and no free-form analysis."
 )
 
 FINAL_INSTRUCTION = (

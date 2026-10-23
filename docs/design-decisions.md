@@ -387,3 +387,28 @@ question for evaluation, alongside the planned severity floor and ATT&CK output
 controls. A model that cannot cite correctly produces `invalid_output` rather
 than a draft with unsupported claims. The schema grows with the number of
 citable results; the worst-case budget test covers the largest possible set.
+
+---
+
+## DD-016: Investigation turns have their own output limit and instruction
+
+**Context.** In private runs on synthetic samples, the model often answered an
+investigation turn with free text instead of a tool call. That text is
+discarded, but it was generated up to the full 1,024-token output limit, which
+took minutes on CPU. Final and repair requests have little context headroom
+left (DD-015), so any fix must not add to them.
+
+**Decision.** Investigation requests reserve and allow 384 output tokens, enough
+for three tool calls with long arguments; final and repair requests keep 1,024.
+Each investigation request also ends with a fixed instruction to reply with
+tool calls only. The instruction is added to the request and never stored in
+the conversation history, so final and repair requests are unchanged in content
+and size. Each model call records whether its reply stopped at the output limit;
+the record is for evaluation and never changes what the loop does.
+
+**Consequences.** A turn that writes text instead of calling a tool costs at
+most 384 output tokens instead of 1,024. A reply that needs more than 384 tokens
+for its tool calls is cut off, and its tool calls may be lost; the truncation
+record shows how often that happens, and the limit is revisited from real-model
+observations. The instruction can be ignored by a model; the output limit still
+bounds the cost.

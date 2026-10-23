@@ -26,7 +26,8 @@ from .enrich import enrich
 from .evidence import EvidenceLog
 from .prompt import (
     CONTEXT_TOKENS, FINAL_INSTRUCTION, HINT_EMPTY_FIELD, HINT_KEEP, HINT_SOURCE_FORM,
-    HINT_SOURCES_REQUIRED, HINT_UNCITABLE, MAX_OUTPUT_TOKENS, REPAIR_TEMPLATE, TOOL_RESULT_MAX_BYTES,
+    HINT_SOURCES_REQUIRED, HINT_UNCITABLE, INVESTIGATION_INSTRUCTION, INVESTIGATION_MAX_OUTPUT_TOKENS,
+    MAX_OUTPUT_TOKENS, REPAIR_TEMPLATE, TOOL_RESULT_MAX_BYTES,
     dumps, enrichment_view, fits, initial_messages, render_assistant, render_result, token_bound,
     tool_specs,
 )
@@ -176,9 +177,17 @@ def run_agent(alert: Alert, backend: Backend, *, settings: Settings | None = Non
         # A request gets no more than the time left in the run, and a call that
         # ends after the run deadline stops the run, whatever it returned.
         remaining = limits.run_timeout_s - (clock() - start)
+        request_messages, max_output_tokens = list(messages), MAX_OUTPUT_TOKENS
+        if phase == "investigate":
+            # The instruction is added to this request only, never to the
+            # stored history: each investigation request carries one copy, at
+            # the end, and final and repair requests carry none, so their
+            # content and context budget are unchanged.
+            request_messages.append({"role": "user", "content": INVESTIGATION_INSTRUCTION})
+            max_output_tokens = INVESTIGATION_MAX_OUTPUT_TOKENS
         request = ChatRequest(
-            messages=list(messages), tools=specs, response_schema=schema,
-            max_output_tokens=MAX_OUTPUT_TOKENS, context_tokens=CONTEXT_TOKENS,
+            messages=request_messages, tools=specs, response_schema=schema,
+            max_output_tokens=max_output_tokens, context_tokens=CONTEXT_TOKENS,
             timeout_s=min(limits.request_timeout_s, remaining), alert=alert, enrichment=enrichment,
             citable=citable)
         # Preflight: never send a request after the deadline or one that would
@@ -195,6 +204,10 @@ def run_agent(alert: Alert, backend: Backend, *, settings: Settings | None = Non
             late = clock() - start >= limits.run_timeout_s
             raise _Stop("budget_exceeded" if late else "backend_error") from None
         record.input_tokens, record.output_tokens = reply.input_tokens, reply.output_tokens
+        # Observational only: the loop's control flow, acceptance and stop
+        # reasons never depend on it, and a truncated reply is not treated as
+        # a lost tool call.
+        record.truncated = reply.truncated
         if clock() - start >= limits.run_timeout_s:
             raise _Stop("budget_exceeded")  # the reply is discarded
         return reply
