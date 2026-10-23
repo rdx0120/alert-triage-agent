@@ -6,12 +6,17 @@ import typing
 
 from pydantic_core.core_schema import ErrorType
 
+from pydantic import ValidationError
+
 from triage import prompt
-from triage.agent import Limits, run_agent
+from triage.agent import Limits, run_agent, sanitized_problems
 from triage.backends import ChatReply, ChatRequest, ToolCall, serialize_request
+from triage.citations import EMPTY_FIELD, UNCITABLE, Citable, generator_schema
+from triage.enrich import MAX_CVES, MAX_REPLACEMENT_HOPS, MAX_TECHNIQUES
 from triage.prompt import (
     ALERT_METADATA_MAX_BYTES, ARGUMENT_STRING_MAX_BYTES, ASSISTANT_MESSAGE_MAX_BYTES,
     CONTEXT_TOKENS, ENRICHMENT_VIEW_MAX_BYTES, EVENT_KEY_MAX_BYTES, FINAL_INSTRUCTION,
+    HINT_EMPTY_FIELD, HINT_KEEP, HINT_SOURCE_FORM, HINT_SOURCES_REQUIRED, HINT_UNCITABLE,
     MAX_OUTPUT_TOKENS, REPAIR_TEMPLATE, RESULT_STRING_TIERS, SYSTEM_PROMPT,
     TEMPLATE_TOKENS_BASE, TEMPLATE_TOKENS_PER_MESSAGE, TEMPLATE_TOKENS_PER_TOOL,
     TOOL_RESULT_MAX_BYTES, TRUNCATION_MARKER, UNTRUSTED_VIEW_MAX_BYTES,
@@ -19,8 +24,8 @@ from triage.prompt import (
     message_bytes, render_assistant, render_result, tool_specs, untrusted_view, wire_len,
 )
 from triage.schemas import (
-    Alert, DraftContainment, DraftMissing, DraftSeverity, DraftSources, DraftStep, DraftTechnique,
-    Enrichment, ModelDraft, ToolResult,
+    MAX_SOURCES, Alert, DraftContainment, DraftMissing, DraftSeverity, DraftSources, DraftStep,
+    DraftTechnique, Enrichment, ModelDraft, ToolResult,
 )
 from triage.tools import registry
 
@@ -236,18 +241,79 @@ def _draft_field_names():
                                                   DraftContainment, DraftMissing, DraftSources)))
 
 
-def longest_repair_message():
-    """The longest repair message sanitized_problems() can produce.
+# The deepest problem path a draft can produce, such as
+# missing_data.0.sources.0.<unknown>: the last element is the union member a
+# source failed to match. test_deepest_problem_path checks it against real errors.
+REPAIR_PATH_DEPTH = 5
 
-    Each loc element is one of our field names, "<unknown>" or a list index
-    (no larger than sys.maxsize); the schema nests at most 4 deep, 5 is used.
-    The error type is the longest code Pydantic defines.
+
+def longest_repair_message():
+    """The longest repair message the loop can produce.
+
+    Each path element is one of our field names, "<unknown>" or a list index
+    (no larger than sys.maxsize), at most REPAIR_PATH_DEPTH deep. The code is
+    the longest Pydantic error type or citation code, and every hint is included.
     """
     element = max([*_draft_field_names(), "<unknown>", str(sys.maxsize)], key=len)
-    error_type = max(typing.get_args(ErrorType), key=len)
-    problem = f"{'.'.join([element] * 5)}: {error_type}"
+    error_type = max([*typing.get_args(ErrorType), UNCITABLE, EMPTY_FIELD], key=len)
+    problem = f"{'.'.join([element] * REPAIR_PATH_DEPTH)}: {error_type}"
     problems = [problem] * 10 + [f"and {sys.maxsize} more"]
-    return REPAIR_TEMPLATE.format(problems="; ".join(problems))
+    hints = [HINT_SOURCES_REQUIRED, HINT_SOURCE_FORM, HINT_UNCITABLE, HINT_EMPTY_FIELD, HINT_KEEP]
+    return REPAIR_TEMPLATE.format(problems="; ".join(problems), hints=" ".join(hints))
+
+
+def test_deepest_problem_path():
+    """The repair-message bound must assume the deepest path a real validation error has."""
+    bad_sources = {"sources": [7]}
+    draft = {
+        "technique": {"technique_id": "T1059", **bad_sources},
+        "severity": {"value": "low", "rationale": "r", **bad_sources},
+        "next_steps": [{"step": "s", **bad_sources}],
+        "containment": [{"action": "a", **bad_sources}],
+        "missing_data": [{"kind": "other", "description": "d", **bad_sources}],
+    }
+    try:
+        ModelDraft.model_validate(draft)
+    except ValidationError as e:
+        problems = [p for p in sanitized_problems(e) if not p.startswith("and ")]
+    depths = [len(p.rpartition(": ")[0].split(".")) for p in problems]
+    assert max(depths) == REPAIR_PATH_DEPTH
+    assert "missing_data.0.sources.0.<unknown>: literal_error" in problems
+
+
+def max_citable_ids():
+    """The most evidence IDs one run can hold, from the loop's and enrichment's limits.
+
+    Enrichment: each technique tag's lookup plus its replacement hops, one
+    asset, each CVE and one runbook search. Then one per model tool call.
+    """
+    enrichment = MAX_TECHNIQUES * (1 + MAX_REPLACEMENT_HOPS) + 1 + MAX_CVES + 1
+    return enrichment + Limits().max_tool_calls
+
+
+def worst_case_schema(tools):
+    """The largest generator_schema() a run can send.
+
+    Every ID uses the longest allow-listed tool name (only allow-listed tools
+    are citable), and every split between SupportSource and AbsenceSource is
+    tried, keeping the largest.
+    """
+    longest = max(tools, key=len)
+    ids = [f"{longest}:{i:016x}" for i in range(max_citable_ids())]
+    schemas = [generator_schema(Citable(support=tuple(ids[:k]), absence=tuple(ids[k:])))
+               for k in range(len(ids) + 1)]
+    return max(schemas, key=lambda s: len(dumps(s).encode()))
+
+
+def test_worst_case_citable_set(tools):
+    """The schema bound is computed for the most citable IDs a run can hold, at the longest ID."""
+    assert max_citable_ids() == 33
+    assert max(tools, key=len) == "kev_epss_lookup"   # tools is build_tools(settings)
+    schema = worst_case_schema(tools)
+    enums = [schema["$defs"]["SupportSource"]["enum"], schema["$defs"].get("AbsenceSource", {}).get("enum", [])]
+    ids = [v for enum in enums for v in enum if ":" in v]
+    assert len(ids) == len(set(ids)) == 33
+    assert {len(v) for v in ids} == {len("kev_epss_lookup") + 17}
 
 
 def worst_case_arithmetic(tools):
@@ -255,12 +321,12 @@ def worst_case_arithmetic(tools):
 
     Returns (investigation bound, final/repair bound, fixed bytes). Investigation
     requests carry the tool specs and no schema; the final and repair requests
-    carry the draft schema and no tools. Each bound counts every message the
+    carry the largest generator schema and no tools. Each bound counts every message the
     longest run can hold, so it also covers requests made earlier in the run.
     """
     limits = Limits()
     turns, n_tools = limits.max_investigation_turns, limits.max_tool_calls
-    schema = ModelDraft.model_json_schema()
+    schema = worst_case_schema(tools)
     fixed = {
         "system": message_bytes({"role": "system", "content": SYSTEM_PROMPT}),
         "final": message_bytes({"role": "user", "content": FINAL_INSTRUCTION}),
@@ -313,7 +379,7 @@ class _WorstCaseBackend:
         self.requests = []
         query = lambda i: chr(0x1F600 + i) + FOUR * 299  # noqa: E731 - distinct 300-character queries
         calls = lambda ids: [ToolCall("runbook_search", {"query": query(i), "top_k": 5}) for i in ids]  # noqa: E731
-        bad_ids = {"missing_data": [{"kind": "other", "description": "d", "evidence_ids": ["X"] * 10}] * 10}
+        bad_ids = {"missing_data": [{"kind": "other", "description": "d", "sources": ["X"] * MAX_SOURCES}] * 10}
         self.replies = [ChatReply(tool_calls=calls(range(4))), ChatReply(tool_calls=calls([4])),
                         ChatReply(tool_calls=calls([5])), ChatReply(tool_calls=calls([6])),
                         ChatReply(text=json.dumps(bad_ids)), ChatReply(text="not json")]
@@ -366,4 +432,7 @@ def test_worst_case_budget_constructed(settings, tools):
     assert wire_len(dumps(document["untrusted_alert_data"])) <= UNTRUSTED_VIEW_MAX_BYTES
     assert wire_len(dumps(document["alert_metadata"])) <= ALERT_METADATA_MAX_BYTES
     assert wire_len(dumps(document["enrichment"])) <= ENRICHMENT_VIEW_MAX_BYTES
-    assert "and 93 more" in backend.requests[-1].messages[-1]["content"]
+    repair = backend.requests[-1].messages[-1]["content"]
+    # 10 findings x MAX_SOURCES sources x 2 union members, plus 3 missing fields, minus the 10 shown.
+    assert "and 373 more" in repair
+    assert HINT_SOURCE_FORM in repair and HINT_KEEP in repair

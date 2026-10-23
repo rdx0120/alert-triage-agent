@@ -11,7 +11,7 @@ an error, not something silently ignored.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -158,21 +158,22 @@ EvidenceIdStr = Annotated[str, Field(pattern=EVIDENCE_ID_PATTERN)]
 MAX_MISSING_DATA = 16
 
 
-class DraftSources(Strict):
-    """What a finding relies on: lookups from this run, alert fields, or both.
+# Structure only: an alert-field name or a string shaped like an evidence ID.
+Source = Union[AlertField, EvidenceIdStr]
 
-    Both kinds are checkable: an evidence ID against the run's log and an
-    alert field against the alert, so an uncited finding is rejected here.
+# Up to 10 evidence IDs plus the 9 alert fields.
+MAX_SOURCES = 19
+
+
+class DraftSources(Strict):
+    """What a finding relies on: evidence IDs, alert-field names, or both.
+
+    Structure only: whether a source is eligible for this run is decided by
+    triage.citations.check_citations, which the agent loop applies to every
+    final and repair reply.
     """
 
-    evidence_ids: list[EvidenceIdStr] = Field(default_factory=list, max_length=10)
-    alert_fields: list[AlertField] = Field(default_factory=list, max_length=9)
-
-    @model_validator(mode="after")
-    def _cites_something(self) -> "DraftSources":
-        if not self.evidence_ids and not self.alert_fields:
-            raise ValueError("a finding must cite evidence_ids or alert_fields")
-        return self
+    sources: list[Source] = Field(min_length=1, max_length=MAX_SOURCES)
 
 
 class DraftTechnique(DraftSources):
@@ -227,6 +228,7 @@ class ModelCallRecord(Strict):
     tool_calls_requested: int = 0
     tool_calls_run: int = 0
     tool_calls_dropped: int = 0
+    finding_counts: dict[str, int] | None = None  # final and repair replies; for evaluation only
 
 
 class AgentResult(Strict):

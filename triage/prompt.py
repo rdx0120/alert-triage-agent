@@ -61,9 +61,13 @@ SYSTEM_PROMPT = (
     "has an evidence_id.\n\n"
     "You may call the tools to look up more context; each result has an "
     "evidence_id. When asked for the final answer, reply with one JSON object "
-    "that matches the given schema. Every finding must cite its sources: "
-    "evidence_ids from this conversation, alert_fields naming the alert fields it "
-    "relies on, or both. Cite nothing else. If something cannot be determined, "
+    "that matches the given schema. Every finding must list its sources: "
+    "evidence IDs shown in this conversation, alert field names (rule_id, "
+    "rule_level, rule_tags, rule_title, host, user, timestamp, cves, event), or "
+    "both. alert_metadata, untrusted_alert_data and enrichment are section names, "
+    "not evidence IDs. A missing_data finding may also cite a lookup that failed "
+    "or found nothing, or an empty alert field. Cite nothing else. If something "
+    "cannot be determined, "
     "list it under missing_data instead of guessing. Containment actions are "
     "suggestions that a human must approve."
 )
@@ -74,9 +78,20 @@ FINAL_INSTRUCTION = (
 )
 
 REPAIR_TEMPLATE = (
-    "Your previous reply did not match the required schema. Problems: {problems}. "
-    "Reply again with only one JSON object that matches the schema."
+    "Your previous reply did not match the requirements. Problems: {problems}. "
+    "{hints} Reply again with only one JSON object that matches the schema."
 )
+
+# Fixed repair hints. The loop includes each one once if any problem triggers
+# it, then HINT_KEEP; nothing from the failed reply is echoed.
+HINT_SOURCES_REQUIRED = "Every finding needs at least one source."
+HINT_SOURCE_FORM = "Each source must be one of the evidence IDs or alert field names the schema allows."
+HINT_UNCITABLE = (
+    "Cite only evidence IDs shown with their data in this conversation; missing_data "
+    "may also cite failed or not-found lookups shown here."
+)
+HINT_EMPTY_FIELD = "Cite an alert field only if it has a value; missing_data may cite an empty field."
+HINT_KEEP = "Correct the sources rather than removing findings; remove a finding only if nothing supports it."
 
 
 # --- Measurement -----------------------------------------------------------

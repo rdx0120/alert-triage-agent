@@ -7,17 +7,23 @@ import pytest
 
 from triage import agent
 from triage.agent import Limits, run_agent
-from triage.backends import BackendError, ChatReply, HeuristicBackend, ToolCall, serialize_request
+from triage.backends import BackendError, ChatReply, ChatRequest, HeuristicBackend, ToolCall, serialize_request
+from triage.citations import Citable, check_citations, citable_from_views, generator_schema
 from triage.config import REPO_ROOT
-from triage.evidence import EvidenceCollisionError
+from triage.enrich import enrich
+from triage.evidence import EvidenceCollisionError, EvidenceLog
 from triage.ingest import load_alert
+from triage.prompt import (
+    CONTEXT_TOKENS, HINT_EMPTY_FIELD, HINT_KEEP, HINT_SOURCE_FORM, HINT_SOURCES_REQUIRED, HINT_UNCITABLE,
+    MAX_OUTPUT_TOKENS, TOOL_RESULT_MAX_BYTES, enrichment_view, render_result,
+)
 from triage.schemas import Alert, DraftSeverity, ModelDraft
 from triage.tools import registry
 
 SAMPLES = sorted((REPO_ROOT / "samples" / "alerts").glob("*/*.json"))
 POWERSHELL = REPO_ROOT / "samples" / "alerts" / "wazuh" / "encoded_powershell.json"
 MARKER = "ZQXMARKER7731"
-VALID = ModelDraft(severity=DraftSeverity(value="high", rationale="r", alert_fields=["rule_level"]),
+VALID = ModelDraft(severity=DraftSeverity(value="high", rationale="r", sources=["rule_level"]),
                    next_steps=[], containment=[], missing_data=[]).model_dump_json()
 
 
@@ -66,11 +72,28 @@ def _sent(backend):
 
 # --- Rule-based baseline -------------------------------------------------
 
+class RecordingHeuristic(HeuristicBackend):
+    """The rule-based backend, recording every request it answers."""
+
+    def __init__(self):
+        self.requests = []
+
+    def chat(self, request):
+        self.requests.append(request)
+        return super().chat(request)
+
+
+def test_sample_count():
+    """The baseline test below covers all ten samples."""
+    assert len(SAMPLES) == 10
+
+
 @pytest.mark.parametrize("path", SAMPLES, ids=lambda p: f"{p.parent.name}/{p.name}")
 def test_heuristic_over_samples(path, settings, tools):
-    """The baseline completes on every sample, cites only this run's lookups and adds no evidence."""
+    """The baseline completes on every sample, cites only evidence the run showed and adds no evidence."""
     alert = _load(path)
-    result = run_agent(alert, HeuristicBackend(), settings=settings, tools=tools)
+    backend = RecordingHeuristic()
+    result = run_agent(alert, backend, settings=settings, tools=tools)
     assert result.stop_reason == "completed" and result.backend == "heuristic"
     assert [c.phase for c in result.model_calls] == ["investigate", "final"]
     assert result.tool_calls == 0
@@ -80,8 +103,11 @@ def test_heuristic_over_samples(path, settings, tools):
     assert (draft.technique.technique_id if draft.technique else None) == (techniques[0] if techniques else None)
     assert len(draft.missing_data) == len(result.enrichment.gaps)
     ids = {r.evidence_id for r in result.evidence}
+    citable = backend.requests[-1].citable
+    assert check_citations(draft, citable, alert) == []
     findings = [draft.technique, draft.severity, *draft.next_steps, *draft.missing_data]
-    assert all(set(f.evidence_ids) <= ids for f in findings if f is not None)
+    cited = {s for f in findings if f is not None for s in f.sources if ":" in s}
+    assert cited <= citable.support_set | citable.absence_set <= ids
     assert set(result.evidence_origin) == ids
     assert set(result.evidence_origin.values()) == {"enrichment"}
 
@@ -134,8 +160,26 @@ def test_heuristic_reports_every_gap_when_lookups_fail(settings, tools):
     gaps = result.enrichment.gaps
     assert len(gaps) == 14 and result.enrichment.status == "degraded"
     assert result.stop_reason == "completed"
-    assert [(m.kind, m.evidence_ids) for m in result.draft.missing_data] == \
+    assert [(m.kind, m.sources[:-1]) for m in result.draft.missing_data] == \
         [(g.kind, [g.evidence_id] if g.evidence_id else []) for g in gaps]
+
+
+def test_heuristic_without_citable_cites_alert_fields_only(settings, tools):
+    """Without a citable set the baseline cites no evidence ID at all (fail closed)."""
+    alert = Alert(alert_id="h-1", source="synthetic", rule_id="r-1", rule_title="t", rule_level="high",
+                  rule_tags=["attack.t1059.001"], host="CLINIC-LAB99")
+    enrichment = enrich(alert, EvidenceLog(tools), settings)
+    assert enrichment.techniques and any(g.evidence_id for g in enrichment.gaps)   # IDs it could have cited
+    request = ChatRequest(messages=[], tools=None, response_schema={}, max_output_tokens=MAX_OUTPUT_TOKENS,
+                          context_tokens=CONTEXT_TOKENS, timeout_s=1.0, alert=alert, enrichment=enrichment)
+    assert request.citable is None
+    draft = ModelDraft.model_validate_json(HeuristicBackend().chat(request).text)
+    assert draft.technique.sources == ["rule_tags"] and draft.severity.sources == ["rule_level"]
+    assert draft.next_steps == []
+    assert [m.sources for m in draft.missing_data] == [["host"]]
+    findings = [draft.technique, draft.severity, *draft.next_steps, *draft.containment, *draft.missing_data]
+    assert not any(":" in s for f in findings for s in f.sources)
+    assert check_citations(draft, Citable(), alert) == []
 
 
 # --- Phases and limits ---------------------------------------------------
@@ -146,7 +190,9 @@ def test_single_call_mode(settings, tools):
                            limits=Limits(max_tool_calls=0))
     assert result.stop_reason == "completed"
     assert len(backend.requests) == 1 and backend.requests[0].tools is None
-    assert backend.requests[0].response_schema == ModelDraft.model_json_schema()
+    request = backend.requests[0]
+    assert request.citable is not None
+    assert request.response_schema == generator_schema(request.citable)
     assert [c.phase for c in result.model_calls] == ["final"]
 
 
@@ -315,7 +361,7 @@ def test_non_json_reply(settings, tools):
 
 def test_problem_list_is_capped():
     """At most 10 problems are echoed, then a count."""
-    bad = json.dumps({"missing_data": [{"kind": "x", "description": "d", "alert_fields": ["event"]}] * 10})
+    bad = json.dumps({"missing_data": [{"kind": "x", "description": "d", "sources": ["event"]}] * 10})
     try:
         ModelDraft.model_validate_json(bad)
     except Exception as e:  # noqa: BLE001 - the ValidationError is the subject of the test
@@ -466,3 +512,141 @@ def test_backend_error_after_run_deadline(at, reason, settings, tools):
     result = run_agent(_powershell(), backend, settings=settings, tools=tools, clock=clock)
     assert result.stop_reason == reason and result.draft is None
     assert len(backend.requests) == 1
+
+
+# --- Citations -----------------------------------------------------------
+
+FABRICATED = "alert_metadata:" + "0123456789abcdef"   # the shape seen in testing: a section name as an ID
+
+
+def _draft_citing(*sources, **findings):
+    draft = {"severity": {"value": "high", "rationale": "r", "sources": list(sources)},
+             "next_steps": [], "containment": [], "missing_data": [], **findings}
+    return ChatReply(text=json.dumps(draft))
+
+
+def _no_host():
+    return Alert(alert_id="n-1", source="synthetic", rule_id="r-1", rule_title="t", rule_level="high",
+                 rule_tags=["attack.t1059.001"])
+
+
+def test_fabricated_id_is_repaired(settings, tools):
+    """A well-formed but invented evidence ID is not accepted; a corrected repair is."""
+    replies = [ChatReply(), _draft_citing(FABRICATED), _draft_citing("rule_level")]
+    result, backend = _run(_powershell(), replies, settings, tools)
+    assert result.stop_reason == "completed"
+    assert [c.phase for c in result.model_calls] == ["investigate", "final", "repair"]
+    assert "severity.sources.0: uncitable_evidence_id" in backend.requests[-1].messages[-1]["content"]
+    assert result.validation_errors == ["severity.sources.0: uncitable_evidence_id"]
+
+
+def test_fabricated_id_twice_is_invalid_output(settings, tools):
+    """A repair that still cites invented evidence ends the run with no draft."""
+    replies = [ChatReply(), _draft_citing(FABRICATED), _draft_citing("rule_level", FABRICATED)]
+    result, _ = _run(_powershell(), replies, settings, tools)
+    assert result.stop_reason == "invalid_output" and result.draft is None
+    assert result.validation_errors == ["severity.sources.1: uncitable_evidence_id"]
+
+
+def test_empty_alert_field_twice_is_invalid_output(settings, tools):
+    """A claim resting on an alert field with no value is not accepted, even when structurally valid."""
+    replies = [ChatReply(), _draft_citing("host"), _draft_citing("host")]
+    result, _ = _run(_no_host(), replies, settings, tools)
+    assert result.stop_reason == "invalid_output" and result.draft is None
+    assert result.validation_errors == ["severity.sources.0: empty_alert_field"]
+
+
+def test_repair_reply_is_citation_checked(settings, tools):
+    """A structurally valid but uncitable repair never completes, whatever the final reply was."""
+    for final in (ChatReply(text="not json"), _draft_citing(FABRICATED)):
+        replies = [ChatReply(), final, _draft_citing(FABRICATED)]
+        result, _ = _run(_powershell(), replies, settings, tools)
+        assert result.stop_reason == "invalid_output" and result.draft is None
+
+
+def test_repair_hints_for_citation_problems(settings, tools):
+    """Citation problems get their fixed hints and the keep-findings hint, never the cited value."""
+    invented = f"{MARKER.lower()}:0123456789abcdef"
+    final = _draft_citing(invented, "host", missing_data=[{"kind": "other", "description": "d", "sources": [invented]}])
+    result, backend = _run(_no_host(), [ChatReply(), final, _draft_citing("rule_level")], settings, tools)
+    assert result.stop_reason == "completed"
+    repair = backend.requests[-1].messages[-1]["content"]
+    assert "Problems: severity.sources.0: uncitable_evidence_id; severity.sources.1: empty_alert_field; " \
+        "missing_data.0.sources.0: uncitable_evidence_id." in repair
+    assert repair.count(HINT_UNCITABLE) == 1 and HINT_EMPTY_FIELD in repair and repair.endswith(
+        f"{HINT_KEEP} Reply again with only one JSON object that matches the schema.")
+    assert HINT_SOURCES_REQUIRED not in repair and HINT_SOURCE_FORM not in repair
+    for text in _sent(backend) + [result.model_dump_json()]:
+        assert MARKER.lower() not in text
+
+
+def test_repair_hints_for_structural_source_problems(settings, tools):
+    """A missing or malformed source list gets the structural hints, not the citation ones."""
+    final = {"severity": {"value": "high", "rationale": "r"}, "next_steps": [{"step": "s", "sources": ["nope"]}],
+             "containment": [], "missing_data": []}
+    replies = [ChatReply(), ChatReply(text=json.dumps(final)), _draft_citing("rule_level")]
+    result, backend = _run(_powershell(), replies, settings, tools)
+    repair = backend.requests[-1].messages[-1]["content"]
+    assert "severity.sources: missing" in repair
+    assert HINT_SOURCES_REQUIRED in repair and HINT_SOURCE_FORM in repair and HINT_KEEP in repair
+    assert HINT_UNCITABLE not in repair and HINT_EMPTY_FIELD not in repair
+    assert "nope" not in repair
+
+
+def test_finding_counts_recorded(settings, tools):
+    """Each final and repair reply's findings are counted, including a repair that drops some."""
+    step = {"step": "s", "sources": [FABRICATED]}
+    missing = {"kind": "other", "description": "d", "sources": ["host"]}
+    final = _draft_citing("rule_level", next_steps=[step, step], missing_data=[missing])
+    replies = [ChatReply(), final, _draft_citing("rule_level", missing_data=[missing])]
+    result, _ = _run(_powershell(), replies, settings, tools)
+    assert result.stop_reason == "completed"
+    investigate, final_call, repair_call = result.model_calls
+    assert investigate.finding_counts is None
+    assert final_call.finding_counts == {"technique": 0, "severity": 1, "next_steps": 2, "containment": 0,
+                                         "missing_data": 1}
+    assert repair_call.finding_counts == {"technique": 0, "severity": 1, "next_steps": 0, "containment": 0,
+                                          "missing_data": 1}
+
+
+@pytest.mark.parametrize("text, counts", [
+    ("not json", None), ("[1, 2]", None), ('"text"', None), ("[" * 100_000, None),
+    ('{"technique": null, "next_steps": "x", "containment": [1, 2, 3]}',
+     {"technique": 0, "severity": 0, "next_steps": 0, "containment": 3, "missing_data": 0}),
+])
+def test_finding_counts_parse_leniently(text, counts):
+    """Counting never fails on odd replies and never needs a valid draft."""
+    assert agent.finding_counts(text) == counts
+
+
+def test_finding_counts_do_not_decide_the_outcome(settings, tools):
+    """A reply with fewer findings is not rejected for it, and more findings do not rescue an invalid one."""
+    result, _ = _run(_powershell(), [ChatReply(), _draft_citing("rule_level")], settings, tools)
+    assert result.stop_reason == "completed" and result.model_calls[-1].finding_counts["next_steps"] == 0
+    many = _draft_citing(FABRICATED, next_steps=[{"step": "s", "sources": ["rule_level"]}] * 8)
+    result, _ = _run(_powershell(), [ChatReply(), many, many], settings, tools)
+    assert result.stop_reason == "invalid_output"
+
+
+def test_final_requests_carry_this_runs_schema(settings, tools):
+    """Final and repair requests offer only this run's citable IDs; investigation requests carry no schema."""
+    alert = _powershell()
+    replies = [_calls(_attack("T1003"), _attack("T1003.999")), ChatReply(), ChatReply(text="nope"),
+               _draft_citing("rule_level")]
+    result, backend = _run(alert, replies, settings, tools)
+    assert result.stop_reason == "completed"
+    investigate, final, repair = backend.requests[:2], backend.requests[2], backend.requests[3]
+    assert all(r.response_schema is None and r.citable is None for r in investigate)
+    model = [r for r in result.evidence if result.evidence_origin[r.evidence_id] == "model"]
+    expected = citable_from_views(enrichment_view(result.enrichment),
+                                  [render_result(r, TOOL_RESULT_MAX_BYTES) for r in model],
+                                  result.evidence, set(tools))
+    assert model[0].evidence_id in expected.support_set and model[1].evidence_id in expected.absence_set
+    for request in (final, repair):
+        assert request.citable == expected
+        assert request.response_schema == generator_schema(expected)
+        # The view kept by the loop is the one serialized into the user message.
+        assert json.loads(request.messages[1]["content"])["enrichment"] == enrichment_view(result.enrichment)
+        # citable is never sent: the serialized request is the same without it.
+        assert serialize_request(request) == serialize_request(dataclasses.replace(request, citable=None))
+        assert set(json.loads(serialize_request(request))) == {"messages", "tools", "format"}
