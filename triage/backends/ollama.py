@@ -255,6 +255,13 @@ class OllamaBackend:
             # can end with a truncated body that looks like a normal end of file.
             raise BackendError("ollama: request deadline exceeded")
 
+        if isinstance(exchange.error, TimeoutError):
+            # The socket timeout is set to the request deadline, so a socket
+            # timeout can only fire once the request has waited its full
+            # deadline: it is the deadline, whichever of the socket timeout and
+            # the watchdog fires first. (socket.timeout is TimeoutError on the
+            # supported Python versions.)
+            raise BackendError("ollama: request deadline exceeded") from None
         if isinstance(exchange.error, (OSError, http.client.HTTPException)):
             # OSError includes timeouts and ssl.SSLError.
             raise BackendError("ollama: connection failed") from None
