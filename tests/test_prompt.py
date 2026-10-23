@@ -8,7 +8,7 @@ from pydantic_core.core_schema import ErrorType
 
 from pydantic import ValidationError
 
-from triage import prompt
+from triage import agent, prompt
 from triage.agent import Limits, run_agent, sanitized_problems
 from triage.backends import ChatReply, ChatRequest, ToolCall, serialize_request
 from triage.citations import EMPTY_FIELD, UNCITABLE, Citable, generator_schema
@@ -17,11 +17,11 @@ from triage.prompt import (
     ALERT_METADATA_MAX_BYTES, ARGUMENT_STRING_MAX_BYTES, ASSISTANT_MESSAGE_MAX_BYTES,
     CONTEXT_TOKENS, ENRICHMENT_VIEW_MAX_BYTES, EVENT_KEY_MAX_BYTES, FINAL_INSTRUCTION,
     HINT_EMPTY_FIELD, HINT_KEEP, HINT_SOURCE_FORM, HINT_SOURCES_REQUIRED, HINT_UNCITABLE,
-    MAX_OUTPUT_TOKENS, REPAIR_TEMPLATE, RESULT_STRING_TIERS, SYSTEM_PROMPT,
-    TEMPLATE_TOKENS_BASE, TEMPLATE_TOKENS_PER_MESSAGE, TEMPLATE_TOKENS_PER_TOOL,
-    TOOL_RESULT_MAX_BYTES, TRUNCATION_MARKER, UNTRUSTED_VIEW_MAX_BYTES,
+    INVESTIGATION_INSTRUCTION, INVESTIGATION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS, REPAIR_TEMPLATE,
+    RESULT_STRING_TIERS, SYSTEM_PROMPT, TEMPLATE_TOKENS_BASE, TEMPLATE_TOKENS_PER_MESSAGE,
+    TEMPLATE_TOKENS_PER_TOOL, TOOL_RESULT_MAX_BYTES, TRUNCATION_MARKER, UNTRUSTED_VIEW_MAX_BYTES,
     cap_strings, dumps, fits, initial_messages,
-    message_bytes, render_assistant, render_result, tool_specs, untrusted_view, wire_len,
+    message_bytes, render_assistant, render_result, token_bound, tool_specs, untrusted_view, wire_len,
 )
 from triage.schemas import (
     MAX_SOURCES, Alert, DraftContainment, DraftMissing, DraftSeverity, DraftSources, DraftStep,
@@ -320,8 +320,8 @@ def worst_case_arithmetic(tools):
     """Upper bounds on the requests of a run at the maximum limits, from fixed sizes and caps.
 
     Returns (investigation bound, final/repair bound, fixed bytes). Investigation
-    requests carry the tool specs and no schema; the final and repair requests
-    carry the largest generator schema and no tools. Each bound counts every message the
+    requests carry the tool specs, no schema and the investigation instruction;
+    the final and repair requests carry the largest generator schema and no tools. Each bound counts every message the
     longest run can hold, so it also covers requests made earlier in the run.
     """
     limits = Limits()
@@ -329,6 +329,8 @@ def worst_case_arithmetic(tools):
     schema = worst_case_schema(tools)
     fixed = {
         "system": message_bytes({"role": "system", "content": SYSTEM_PROMPT}),
+        # Read from the module so a test can replace it.
+        "investigation": message_bytes({"role": "user", "content": prompt.INVESTIGATION_INSTRUCTION}),
         "final": message_bytes({"role": "user", "content": FINAL_INSTRUCTION}),
         "repair": message_bytes({"role": "user", "content": longest_repair_message()}),
         "schema": len(dumps(schema).encode()),
@@ -348,7 +350,8 @@ def worst_case_arithmetic(tools):
                 + TEMPLATE_TOKENS_BASE + TEMPLATE_TOKENS_PER_MESSAGE * n_messages
                 + TEMPLATE_TOKENS_PER_TOOL * n_specs)
 
-    investigation = bound(0, history_messages, _request([], tool_specs(tools), None), len(tools))
+    investigation = bound(fixed["investigation"], history_messages + 1, _request([], tool_specs(tools), None),
+                          len(tools))
     final = bound(fixed["final"] + fixed["repair"], history_messages + 2, _request([], None, schema), 0)
     return investigation, final, sum(fixed.values())
 
@@ -356,8 +359,17 @@ def worst_case_arithmetic(tools):
 def test_worst_case_budget_arithmetic(tools):
     """Every cap at its maximum still leaves room for the reply, so no input can overflow the context."""
     investigation, final, _ = worst_case_arithmetic(tools)
-    assert investigation + MAX_OUTPUT_TOKENS <= CONTEXT_TOKENS
+    assert investigation + INVESTIGATION_MAX_OUTPUT_TOKENS <= CONTEXT_TOKENS
     assert final + MAX_OUTPUT_TOKENS <= CONTEXT_TOKENS
+
+
+def test_investigation_instruction_does_not_move_final_bound(monkeypatch, tools):
+    """Investigation-only text must never reach the final and repair requests' budget."""
+    investigation, final, _ = worst_case_arithmetic(tools)
+    monkeypatch.setattr(prompt, "INVESTIGATION_INSTRUCTION", "")
+    without_investigation, without_final, _ = worst_case_arithmetic(tools)
+    assert final == without_final
+    assert investigation - without_investigation == wire_len(INVESTIGATION_INSTRUCTION) - wire_len("")
 
 
 def _largest(tools, tool, key, values, n):
@@ -436,3 +448,28 @@ def test_worst_case_budget_constructed(settings, tools):
     # 10 findings x MAX_SOURCES sources x 2 union members, plus 3 missing fields, minus the 10 shown.
     assert "and 373 more" in repair
     assert HINT_SOURCE_FORM in repair and HINT_KEEP in repair
+
+
+def test_worst_case_constructed_within_arithmetic(settings, tools):
+    """The arithmetic must cover what the loop sends, the investigation instruction and reservation included."""
+    result, backend = run_worst_case(settings, tools)
+    investigation, final, _ = worst_case_arithmetic(tools)
+    for record, request in zip(result.model_calls, backend.requests):
+        if record.phase == "investigate":
+            assert request.messages[-1] == {"role": "user", "content": INVESTIGATION_INSTRUCTION}
+            assert request.max_output_tokens == INVESTIGATION_MAX_OUTPUT_TOKENS
+            assert token_bound(request) <= investigation
+        else:
+            assert request.max_output_tokens == MAX_OUTPUT_TOKENS
+            assert token_bound(request) <= final
+
+
+def test_worst_case_final_requests_without_instruction(monkeypatch, settings, tools):
+    """The worst-case final and repair requests must be byte-identical with or without the instruction."""
+    _, shipped = run_worst_case(settings, tools)
+    monkeypatch.setattr(agent, "INVESTIGATION_INSTRUCTION", "")
+    _, without = run_worst_case(settings, tools)
+    assert len(shipped.requests) == len(without.requests) == 6
+    for a, b in zip(shipped.requests[4:], without.requests[4:]):
+        assert serialize_request(a) == serialize_request(b)
+        assert token_bound(a) == token_bound(b)

@@ -203,6 +203,19 @@ def test_truncated_reply_passed_through(final_request):
     assert backend.chat(final_request).text == VALID[:20]
 
 
+_MISSING = object()
+
+
+@pytest.mark.parametrize("done_reason, truncated", [
+    ("length", True), ("stop", False), (_MISSING, False), (None, False), (1, False), ("LENGTH", False),
+])
+def test_done_reason_maps_to_truncated(done_reason, truncated, final_request):
+    """Only done_reason "length" may mark a reply truncated; anything else must not."""
+    fields = {} if done_reason is _MISSING else {"done_reason": done_reason}
+    backend, _ = _backend(_reply(VALID, **fields))
+    assert backend.chat(final_request).truncated is truncated
+
+
 # --- Fail closed ---------------------------------------------------------
 
 def _json(obj):
@@ -744,6 +757,20 @@ def test_agent_run_with_ollama_replies(settings, tools):
     assert len(transport.calls) == 3
     new = registry.evidence_id("attack_lookup", {"technique_id": "T1003"})
     assert result.evidence_origin[new] == "model"
+
+
+def test_agent_run_output_limits_in_body(settings, tools):
+    """Investigation bodies must ask for 384 output tokens and final bodies 1,024, with the context unchanged."""
+    alert = load_alert(POWERSHELL.read_text(encoding="utf-8"), fmt="wazuh")
+    lookup = {"function": {"name": "attack_lookup", "arguments": {"technique_id": "T1003"}}}
+    backend, transport = _backend(_reply(tool_calls=[lookup], done_reason="length"), _reply(),
+                                  _reply(VALID, done_reason="stop"))
+    result = run_agent(alert, backend, settings=settings, tools=tools)
+    assert result.stop_reason == "completed"
+    options = [json.loads(body)["options"] for _, body, _ in transport.calls]
+    assert [o["num_predict"] for o in options] == [384, 384, 1024]
+    assert [o["num_ctx"] for o in options] == [32768] * 3
+    assert [c.truncated for c in result.model_calls] == [True, False, False]
 
 
 def test_agent_run_transport_failure(settings, tools):

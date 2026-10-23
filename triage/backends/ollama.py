@@ -184,11 +184,12 @@ def _parse(status: int, data: bytes) -> ChatReply:
             function = {}
         # The loop normalizes bad names and arguments.
         calls.append(ToolCall(name=function.get("name"), arguments=function.get("arguments")))
-    # "thinking" and done_reason are ignored: a truncated reply (done_reason
-    # "length") goes to validation like any other text.
+    # "thinking" is ignored. done_reason is recorded, never acted on: a
+    # truncated reply (done_reason "length") goes to validation like any other text.
     return ChatReply(text=content or "", tool_calls=calls,
                      input_tokens=_count(body.get("prompt_eval_count")),
-                     output_tokens=_count(body.get("eval_count")))
+                     output_tokens=_count(body.get("eval_count")),
+                     truncated=body.get("done_reason") == "length")
 
 
 class OllamaBackend:

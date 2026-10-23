@@ -229,6 +229,7 @@ class ModelCallRecord(Strict):
     tool_calls_run: int = 0
     tool_calls_dropped: int = 0
     finding_counts: dict[str, int] | None = None  # final and repair replies; for evaluation only
+    truncated: bool = False     # the reply stopped at its output limit; for evaluation only
 
 
 class AgentResult(Strict):
