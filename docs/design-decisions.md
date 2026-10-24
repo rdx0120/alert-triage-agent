@@ -447,3 +447,42 @@ they do not prove the full HTTP request or the reply's tool calls. Model
 text that is never kept cannot be inspected later; capturing content is a
 separate, opt-in decision. The fields are observational only: control flow,
 limits and acceptance do not read them.
+
+---
+
+## DD-018: The audit log is a metadata-only JSONL projection of the run record
+
+**Context.** DD-017 records what each run did. An audit log must keep that
+outside the process for later review, and it will be read and shipped by
+people and systems that should not see alert data, prompts or model output.
+Log files are also an attack surface: a planted symlink, a FIFO or a
+world-writable file can redirect, block or expose what is written.
+
+**Decision.** `triage/audit.py` turns a run record into one JSON line per
+operation: the run, each lookup, each model call. Field names follow the
+OpenTelemetry GenAI semantic conventions (Development status, as of
+semantic-conventions-genai commit `9ffc7e0`), with project fields under
+`triage.*` and a schema version. Each record is built from named fields with
+a fixed key set. Identifiers are written only if they match strict patterns,
+problems only in their sanitized form, and the provider from a closed list.
+Prompts, messages, model text, tool arguments, tool data, error messages,
+the backend name and the model endpoint are never written. The metadata
+records are revalidated first, and any failure writes nothing. Lines are
+ASCII-only JSON of bounded size. The file is opened append-only without
+following symlinks or blocking on a FIFO, must be a regular file owned by the
+user with no group or other permissions, and sits in a directory with the
+same ownership and no group or other write access; anything else is refused,
+never repaired. `run_agent()` does not write the log: the caller passes the
+run's result to `write_audit_log()`, so the loop stays free of file I/O.
+
+**Consequences.** A run can be reviewed and shipped to a log store without
+carrying alert data or model output. Digests let a separately kept
+transcript be matched to its run; they cover the serialized prompt and the
+reply text only. The log is not tamper-evident, assumes one writer per file
+and checks only the file and its parent directory; production use needs an
+append-only store. Until the CLI and service call the writer for every run, a
+run is logged only if its caller writes it. A model name that looks like an
+address (an IP address, or a name ending in a digits-only tag such as a port)
+is written as null, so the endpoint never reaches the log. Field names may
+change while the conventions are in development; the schema version marks
+changes.

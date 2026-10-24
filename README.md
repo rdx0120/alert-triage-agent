@@ -89,7 +89,7 @@ service.
 | Model-requested lookups recorded separately from enrichment | Untraceable model-steered evidence | Implemented |
 | Model endpoint must be an `http(s)` URL without credentials, path or query; no proxy or redirect handling; TLS verified | Alert data sent somewhere unintended | Implemented |
 | Hard per-request deadline (never more than the time left in the run), bounded worker threads, 1 MiB reply cap; malformed replies are backend errors | Hung or hostile model endpoint | Implemented |
-| JSONL audit log of every tool call and model response (OpenTelemetry GenAI field names) | Lack of accountability | Planned |
+| Metadata-only JSONL audit log of every lookup and model call (OpenTelemetry GenAI field names): no prompts, model text, tool arguments, tool data, error messages or endpoint; owner-only, append-only file. The writer (`triage.audit.write_audit_log`) is implemented and callable; `run_agent()` does not write a log by itself, and calling it for every run from the CLI and service is planned | Lack of accountability; sensitive data in logs | Partial |
 
 A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
 10 for Agentic Applications, MITRE ATLAS) is planned in `docs/threat-model.md`.
@@ -104,6 +104,7 @@ A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
 | Enrichment | `triage/enrich.py`, `triage/evidence.py` | Deterministic lookups before the model; shared evidence log; explicit gaps; `complete` / `degraded` status |
 | Agent loop | `triage/agent.py`, `triage/prompt.py` | Two phases (investigation with capped tool calls, then a schema-constrained draft); byte budgets; fixed stop reasons |
 | Model backends | `triage/backends/` | One `chat()` interface; rule-based baseline; Ollama over `http.client` with hard deadlines (not yet run against a model) |
+| Audit log | `triage/audit.py` | Metadata-only JSONL projection of a run with fixed keys; refuses unsafe files and directories. Called explicitly with a run's result; not yet called automatically |
 | Tool gateway | `triage/tools/registry.py` | Allow-list, argument validation, error handling, deterministic evidence IDs |
 | `attack_lookup` | `triage/tools/attack.py` | ATT&CK Enterprise v20.0; retired IDs return their replacement |
 | `kev_epss_lookup` | `triage/tools/kev_epss.py` | CISA KEV membership and FIRST EPSS score; missing EPSS reported as unknown |
@@ -168,7 +169,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Data and tools | Schemas, versioned snapshots, four read-only tools, tool gateway | Implemented |
 | Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
-| Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. Claude API (optional) and the audit log are planned | Partial |
+| Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. the metadata-only audit writer is implemented and callable, but not yet called automatically. Claude API (optional) and writing the audit log for every run from the CLI and service are planned | Partial |
 | Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Spotlighting, injection tripwire, severity floors, output evidence and ATT&CK validation, and summary-level fail-closed statuses are planned | Partial |
 | Service and packaging | FastAPI `POST /triage`, CLI, Docker, GitHub Actions CI with security scanning | Planned |
 | Evaluation and threat model | Labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, published results | Planned |
