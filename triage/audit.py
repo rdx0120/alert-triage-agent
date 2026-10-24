@@ -14,18 +14,20 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import os
 import re
 import stat
 from datetime import datetime, timedelta
+from typing import get_args
 
 from pydantic import ValidationError
 
 from .backends.ollama import MODEL_NAME_PATTERN
 from .prompt import INVESTIGATION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS
 from .schemas import (
-    ALERT_ID_PATTERN, RUN_ID_PATTERN, TECHNIQUE_ID_PATTERN, AgentResult, Alert, ModelCallRecord,
-    ToolCallRecord,
+    ALERT_ID_PATTERN, RUN_ID_PATTERN, TECHNIQUE_ID_PATTERN, AgentResult, Alert, BudgetDetail, Enrichment,
+    GapKind, GapReason, ModelCallRecord, Severity, StopReason, ToolCallRecord,
 )
 
 AUDIT_SCHEMA_VERSION = 1
@@ -86,6 +88,34 @@ def _finding_counts(value: object) -> dict[str, int] | None:
     return {k: value[k] for k in FINDING_KEYS}
 
 
+def _is_duration(value: object) -> bool:
+    # type(): a bool is not a duration; NaN, infinity and negatives are not times.
+    return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+
+def _run_values_in_schema(result: AgentResult, alert: Alert) -> bool:
+    # Every run-level value the projection writes, or whose length it writes.
+    # The allowed sets come from the schema, so they cannot drift from it.
+    draft = result.draft
+    return (
+        alert.source in get_args(Alert.model_fields["source"].annotation)
+        and alert.rule_level in get_args(Severity)
+        and (draft is None or draft.severity.value in get_args(Severity))
+        and result.enrichment.status in get_args(Enrichment.model_fields["status"].annotation)
+        and all(g.kind in get_args(GapKind) and g.reason in get_args(GapReason) for g in result.enrichment.gaps)
+        and result.stop_reason in get_args(StopReason)
+        and (result.budget_detail is None or result.budget_detail in get_args(BudgetDetail))
+        and _is_duration(result.duration_s)
+        and _is_duration(result.enrichment_duration_s)
+        and type(result.tool_calls) is int and result.tool_calls >= 0
+        and isinstance(alert.ingest_warnings, list)
+        and isinstance(result.validation_errors, list)
+        and (draft is None or all(isinstance(v, list) for v in (draft.next_steps, draft.containment,
+                                                                draft.missing_data)))
+        and isinstance(result.backend, str)
+    )
+
+
 def _timestamp(started: datetime, offset: float | None) -> str:
     moment = started + timedelta(seconds=offset or 0)
     return moment.isoformat(timespec="milliseconds") + "Z"
@@ -114,6 +144,11 @@ def audit_records(result: AgentResult, alert: Alert) -> list[dict]:
         tool_records = [ToolCallRecord.model_validate(r.model_dump()) for r in result.tool_records]
     except ValidationError:
         raise ValueError("a model call or lookup record is outside its schema") from None
+    # Same reason for the values the run record takes directly from the
+    # result and the alert: nothing reaches the log unless every value
+    # written is within its schema.
+    if not _run_values_in_schema(result, alert):
+        raise ValueError("a run-level field is outside its schema")
 
     provider = _provider(result.backend)
     model = _model(result.model)
@@ -268,8 +303,13 @@ def write_audit_log(result: AgentResult, alert: Alert, path: str | os.PathLike) 
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
             raise PermissionError("audit log must be our regular file with no group or other permissions")
         view = memoryview(data)
+        # A stalled write is reported, never retried forever; bytes already
+        # written stay in the file (one writer per file is assumed).
         while view:
-            view = view[os.write(fd, view):]
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("audit log write made no progress")
+            view = view[written:]
     finally:
         os.close(fd)
     return len(lines)

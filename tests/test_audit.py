@@ -18,7 +18,7 @@ from triage.audit import audit_records, dumps_line, write_audit_log
 from triage.backends import BackendError, ChatReply, HeuristicBackend, ToolCall, serialize_request
 from triage.config import REPO_ROOT
 from triage.ingest import load_alert
-from triage.schemas import Alert, ModelDraft, DraftSeverity
+from triage.schemas import Alert, DraftSeverity, Gap, ModelDraft
 
 SAMPLES = sorted((REPO_ROOT / "samples" / "alerts").glob("*/*.json"))
 POWERSHELL = REPO_ROOT / "samples" / "alerts" / "wazuh" / "encoded_powershell.json"
@@ -572,6 +572,57 @@ def test_nan_duration_writes_nothing(tmp_path, settings, tools):
     assert not path.exists()
 
 
+NAN = float("nan")
+# (object, field, value): every run-level value the projection writes, set
+# after construction, where Pydantic does not validate assignment.
+RUN_FIELD_TAMPERS = (
+    [("alert", f, MARKER) for f in ("source", "rule_level")]
+    + [("severity", "value", MARKER), ("enrichment", "status", MARKER)]
+    + [("result", f, MARKER) for f in ("stop_reason", "budget_detail")]
+    + [("result", f, v) for f in ("duration_s", "enrichment_duration_s")
+       for v in (MARKER, True, -1.0, NAN, float("inf"))]
+    + [("result", "tool_calls", v) for v in (MARKER, True, -1, NAN)]
+    + [(o, f, v) for o, f in (("alert", "ingest_warnings"), ("result", "validation_errors"),
+                              ("draft", "next_steps"), ("draft", "containment"), ("draft", "missing_data"))
+       for v in (MARKER, (MARKER,))]
+    # A marker string is a valid backend, and the backend is never written.
+    + [("result", "backend", [MARKER])]
+)
+
+
+def _assert_run_field_refused(result, alert, tmp_path):
+    with pytest.raises(ValueError) as raised:
+        audit_records(result, alert)
+    assert str(raised.value) == "a run-level field is outside its schema"
+    assert MARKER not in str(raised.value)
+    path = tmp_path / "logs" / "audit.jsonl"
+    with pytest.raises(ValueError):
+        write_audit_log(result, alert, path)
+    assert not path.parent.exists()
+
+
+@pytest.mark.parametrize("obj,field,value", RUN_FIELD_TAMPERS,
+                         ids=[f"{o}.{f}-{v!r}" for o, f, v in RUN_FIELD_TAMPERS])
+def test_run_field_outside_schema_writes_nothing(obj, field, value, tmp_path, settings, tools):
+    """Regression test: a run-level value assigned outside its schema must raise a fixed message, writing nothing."""
+    result, alert = _heuristic(settings, tools)
+    result, alert = result.model_copy(deep=True), alert.model_copy(deep=True)
+    assert result.draft is not None
+    targets = {"alert": alert, "result": result, "enrichment": result.enrichment, "draft": result.draft,
+               "severity": result.draft.severity}
+    setattr(targets[obj], field, value)
+    _assert_run_field_refused(result, alert, tmp_path)
+
+
+@pytest.mark.parametrize("kind,reason", [(MARKER, MARKER), ("technique", MARKER), (MARKER, "not_found")])
+def test_gap_outside_schema_writes_nothing(kind, reason, tmp_path, settings, tools):
+    """Regression test: a gap built without validation must raise a fixed message, writing nothing."""
+    result, alert = _heuristic(settings, tools)
+    result = result.model_copy(deep=True)
+    result.enrichment.gaps.append(Gap.model_construct(kind=kind, reason=reason))
+    _assert_run_field_refused(result, alert, tmp_path)
+
+
 def test_line_over_cap_writes_nothing(monkeypatch, tmp_path, settings, tools):
     """A line over the size cap must raise and nothing may be written."""
     result, alert = _heuristic(settings, tools)
@@ -860,6 +911,46 @@ def test_write_error_propagates(monkeypatch, tmp_path, settings, tools):
         m.setattr(os, "write", full)
         with pytest.raises(OSError, match="No space"):
             write_audit_log(result, alert, tmp_path / "audit.jsonl")
+
+
+def test_write_without_progress_raises_promptly(monkeypatch, tmp_path, settings, tools):
+    """Regression test: an os.write that returns 0 must raise OSError instead of looping forever."""
+    result, alert = _heuristic(settings, tools)
+    errors = []
+
+    def write():
+        try:
+            write_audit_log(result, alert, tmp_path / "audit.jsonl")
+        except Exception as e:
+            errors.append(e)
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "write", lambda fd, data: 0)
+        worker = threading.Thread(target=write, daemon=True)
+        worker.start()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert len(errors) == 1 and type(errors[0]) is OSError
+    assert str(errors[0]) == "audit log write made no progress"
+
+
+def test_partial_writes_give_identical_output(monkeypatch, tmp_path, settings, tools):
+    """Short writes of at most 7 bytes must still give a log byte-identical to a normal write."""
+    real = os.write
+    result, alert = _deterministic(settings, tools)
+    write_audit_log(result, alert, tmp_path / "normal.jsonl")
+    calls = []
+
+    def short(fd, data):
+        calls.append(1)
+        return real(fd, data[:7])
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "write", short)
+        write_audit_log(result, alert, tmp_path / "short.jsonl")
+    normal = (tmp_path / "normal.jsonl").read_bytes()
+    assert (tmp_path / "short.jsonl").read_bytes() == normal
+    assert len(calls) == -(-len(normal) // 7)
 
 
 def test_without_o_nofollow_writes_nothing(monkeypatch, tmp_path, settings, tools):

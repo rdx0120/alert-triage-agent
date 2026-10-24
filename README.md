@@ -169,7 +169,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Data and tools | Schemas, versioned snapshots, four read-only tools, tool gateway | Implemented |
 | Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
-| Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. the metadata-only audit writer is implemented and callable, but not yet called automatically. Claude API (optional) and writing the audit log for every run from the CLI and service are planned | Partial |
+| Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. The metadata-only audit writer is implemented and callable, but not yet called automatically. Claude API (optional) and writing the audit log for every run from the CLI and service are planned | Partial |
 | Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Spotlighting, injection tripwire, severity floors, output evidence and ATT&CK validation, and summary-level fail-closed statuses are planned | Partial |
 | Service and packaging | FastAPI `POST /triage`, CLI, Docker, GitHub Actions CI with security scanning | Planned |
 | Evaluation and threat model | Labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, published results | Planned |
