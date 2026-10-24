@@ -6,12 +6,14 @@ quality assertions.
 """
 
 import dataclasses
+import json
 import os
 import typing
 
 import pytest
 
 from triage.agent import run_agent
+from triage.audit import write_audit_log
 from triage.backends import OllamaBackend, make_backend
 from triage.config import REPO_ROOT, get_settings
 from triage.ingest import load_alert
@@ -27,7 +29,7 @@ SAMPLES = sorted((REPO_ROOT / "samples" / "alerts").glob("*/*.json"))
 
 
 @pytest.mark.parametrize("path", SAMPLES, ids=lambda p: f"{p.parent.name}/{p.name}")
-def test_live_sample(path):
+def test_live_sample(path, tmp_path):
     """A real model run ends with a stop reason, and its prompts never exceed the byte-based token bound."""
     settings = get_settings()
     # Built from OLLAMA_HOST, OLLAMA_MODEL and OLLAMA_THINK, whatever TRIAGE_BACKEND says.
@@ -43,3 +45,9 @@ def test_live_sample(path):
     for call in result.model_calls:
         if call.input_tokens is not None:
             assert call.input_tokens <= call.token_bound
+    log = tmp_path / "audit.jsonl"
+    count = write_audit_log(result, alert, log)
+    records = [json.loads(line) for line in log.read_text(encoding="ascii").splitlines()]
+    assert records[0]["event.name"] == "triage.run"
+    assert records[0]["triage.stop_reason"] == result.stop_reason
+    assert count == len(records) == 1 + len(result.tool_records) + len(result.model_calls)
