@@ -487,6 +487,8 @@ is written as null, so the endpoint never reaches the log. Field names may
 change while the conventions are in development; the schema version marks
 changes.
 
+The summary record and schema version 2 are added in DD-023.
+
 ---
 
 ## DD-019: Output guardrails turn a run into a summary, and code has the last word
@@ -628,3 +630,34 @@ follow the pipeline's caps and tests tie them together, so a later cap
 change must update the renderer. Rendering does not make model text true;
 the labels and footer say so. The renderer is called explicitly; calling it
 from the CLI and service is planned.
+
+---
+
+## DD-023: The audit log records the guardrails' summary as codes and counts
+
+**Context.** The audit log (DD-018) records what the agent loop did, but not
+what the output guardrails decided afterwards: the final severity, the
+technique decision, the anomalies and the injection flag. The summary also
+holds model text and strings from local data, such as an asset owner, which
+can name a person and must not reach the log.
+
+**Decision.** `audit_records()` and `write_audit_log()` take an optional,
+keyword-only `summary`. When one is given, a final `triage.summary` record
+follows the run's records. It holds only codes, identifiers and counts: the
+status; the severity value, rule floor, origin and sources; the technique ID,
+basis and origin; the asset criticality and exposure; counts of next steps,
+containment suggestions and missing-data items by origin; the anomalies; and
+the injection flag and signals. The rationale, steps, actions, missing-data
+descriptions, technique name and asset host and owner are never written. The
+summary is revalidated and must have the run's alert ID and run ID; otherwise
+a fixed-message `ValueError` is raised before anything is written. The record
+carries the run's end as its timestamp, because the guardrails are not timed.
+`AUDIT_SCHEMA_VERSION` becomes 2.
+
+**Consequences.** A reviewer can see from the log alone what the guardrails
+decided and why a run was flagged, without seeing model or alert text. The
+other record types are unchanged apart from the version, and each line
+carries its own version, so a file can hold version-1 and version-2 records
+and a consumer reads the version per line. A caller that has only the run can
+still write the log without a summary. The writer is still called explicitly;
+writing the log for every run from the CLI and service is planned.

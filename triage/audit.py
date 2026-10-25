@@ -1,10 +1,12 @@
 """The audit log: a metadata-only projection of an AgentResult into JSONL.
 
-One JSON line per operation: the run, each lookup, each model call. Field
-names follow the OpenTelemetry GenAI semantic conventions, with project fields
-under triage.*. Every record is built from named fields with a fixed key set,
-so the log never holds content: no alert text, prompts, messages, model text,
-tool arguments, tool data, error messages, the backend name or the endpoint.
+One JSON line per operation: the run, each lookup, each model call, and, when
+the caller passes it, the guardrails' summary. Field names follow the
+OpenTelemetry GenAI semantic conventions, with project fields under triage.*.
+Every record is built from named fields with a fixed key set, so the log never
+holds content: no alert text, prompts, messages, model text, tool arguments,
+tool data, error messages, the backend name or the endpoint, and from the
+summary no free text, technique name, asset host or owner.
 
 run_agent() does not write the log; the caller passes the run's result to
 write_audit_log(), so the loop stays free of file I/O.
@@ -27,10 +29,12 @@ from .backends.ollama import MODEL_NAME_PATTERN
 from .prompt import INVESTIGATION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS
 from .schemas import (
     ALERT_ID_PATTERN, RUN_ID_PATTERN, TECHNIQUE_ID_PATTERN, AgentResult, Alert, BudgetDetail, Enrichment,
-    GapKind, GapReason, ModelCallRecord, Severity, StopReason, ToolCallRecord,
+    GapKind, GapReason, ModelCallRecord, Severity, StopReason, ToolCallRecord, TriageSummary,
 )
 
-AUDIT_SCHEMA_VERSION = 1
+# 2: adds the optional triage.summary record (DD-023). Records of other types
+# are unchanged from version 1, and each line carries its own version.
+AUDIT_SCHEMA_VERSION = 2
 AGENT_NAME = "alert-triage-agent"
 MAX_AUDIT_LINE_BYTES = 8_192
 PROVIDERS = ("ollama", "heuristic")
@@ -116,13 +120,34 @@ def _run_values_in_schema(result: AgentResult, alert: Alert) -> bool:
     )
 
 
+def _checked_summary(summary: object, result: AgentResult) -> TriageSummary:
+    """A validated copy of summary, which must belong to this run."""
+    if not isinstance(summary, TriageSummary):
+        raise ValueError("summary is not a valid TriageSummary")
+    # Assignment is not validated, so revalidate; the copy is what is
+    # projected, and Pydantic returns exact str values and the schema's own
+    # Literal values. warnings=False: a serializer warning for a wrongly typed
+    # value quotes that value.
+    try:
+        checked = TriageSummary.model_validate(summary.model_dump(warnings=False))
+    except ValidationError:
+        raise ValueError("summary is not a valid TriageSummary") from None
+    if checked.alert_id != result.alert_id or checked.run_id != result.run_id:
+        raise ValueError("summary does not match the run")
+    return checked
+
+
 def _timestamp(started: datetime, offset: float | None) -> str:
     moment = started + timedelta(seconds=offset or 0)
     return moment.isoformat(timespec="milliseconds") + "Z"
 
 
-def audit_records(result: AgentResult, alert: Alert) -> list[dict]:
-    """The run's audit records, in line order: the run, enrichment lookups, then each model call and its lookups."""
+def audit_records(result: AgentResult, alert: Alert, *, summary: TriageSummary | None = None) -> list[dict]:
+    """The run's audit records, in line order: the run, enrichment lookups, then each model call and its lookups.
+
+    With a summary, a final triage.summary record follows: the guardrails'
+    decision as codes and counts. The summary must belong to the run.
+    """
     # Fixed messages: the values come from the caller and are not echoed.
     if alert.alert_id != result.alert_id:
         raise ValueError("alert does not match the run")
@@ -149,6 +174,7 @@ def audit_records(result: AgentResult, alert: Alert) -> list[dict]:
     # written is within its schema.
     if not _run_values_in_schema(result, alert):
         raise ValueError("a run-level field is outside its schema")
+    checked = None if summary is None else _checked_summary(summary, result)
 
     provider = _provider(result.backend)
     model = _model(result.model)
@@ -257,6 +283,33 @@ def audit_records(result: AgentResult, alert: Alert) -> list[dict]:
 
     if lookups != len(result.tool_records):
         raise ValueError("every lookup must appear exactly once in the audit log")
+
+    if checked is not None:
+        # The guardrails run after the loop and are not timed, so the record
+        # carries the run's end. Only codes, IDs and counts: never the
+        # rationale, steps, actions, missing-data descriptions, the technique
+        # name, or the asset host and owner (an owner can be a person).
+        add(result.duration_s, "triage.summary", "invoke_agent", {
+            "triage.summary.status": checked.status,
+            "triage.severity.value": checked.severity.value,
+            "triage.severity.rule_floor": checked.severity.rule_floor,
+            "triage.severity.origin": checked.severity.origin,
+            "triage.severity.sources": list(checked.severity.sources),
+            "triage.technique.id": checked.technique.technique_id,
+            "triage.technique.basis": checked.technique.basis,
+            "triage.technique.origin": checked.technique.origin,
+            "triage.asset.criticality": checked.asset.criticality,
+            "triage.asset.exposure": checked.asset.exposure,
+            "triage.findings": {
+                "next_steps": len(checked.next_steps),
+                "containment": len(checked.containment),
+                "missing_data_enrichment": sum(1 for m in checked.missing_data if m.origin == "enrichment"),
+                "missing_data_model": sum(1 for m in checked.missing_data if m.origin == "model"),
+            },
+            "triage.anomalies": list(checked.anomalies),
+            "triage.injection.suspected": checked.injection_suspected,
+            "triage.injection.signals": list(checked.injection_signals),
+        })
     return records
 
 
@@ -270,8 +323,11 @@ def dumps_line(record: dict) -> str:
     return line
 
 
-def write_audit_log(result: AgentResult, alert: Alert, path: str | os.PathLike) -> int:
-    """Append the run's audit records to path; returns the number of lines written.
+def write_audit_log(result: AgentResult, alert: Alert, path: str | os.PathLike, *,
+                    summary: TriageSummary | None = None) -> int:
+    """Append the run's audit records to path, and the summary record if summary is given.
+
+    Returns the number of lines written.
 
     One writer per file is assumed. Only the file and its parent directory are
     checked, and the log is not tamper-evident: production use needs an
@@ -279,7 +335,7 @@ def write_audit_log(result: AgentResult, alert: Alert, path: str | os.PathLike) 
     """
     # Everything is built and serialized first, so any error raises before
     # the file system is touched.
-    lines = [dumps_line(r) for r in audit_records(result, alert)]
+    lines = [dumps_line(r) for r in audit_records(result, alert, summary=summary)]
     data = "".join(lines).encode("ascii")
     if not hasattr(os, "O_NOFOLLOW"):
         raise OSError("audit log needs O_NOFOLLOW, which this platform lacks")
