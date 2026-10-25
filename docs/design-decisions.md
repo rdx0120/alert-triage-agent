@@ -524,6 +524,8 @@ the label (the rule's ATT&CK mapping, a model-requested lookup, or nothing),
 never that the behaviour occurred; whether an alert is a true positive is not
 decided here.
 
+The planned tripwire and spotlighting are implemented in DD-020 and DD-021.
+
 ---
 
 ## DD-020: An injection tripwire flags alert text addressed to an AI system and escalates
@@ -561,3 +563,32 @@ fields let analysts and later tuning see why, and the formal evaluation
 measures detection and false-positive rates. The tripwire adds no input text
 to the summary, but model-derived findings may still quote alert text. The
 model still reads the injected text; spotlighting (planned) addresses that.
+
+Spotlighting is implemented in DD-021.
+
+---
+
+## DD-021: Untrusted alert text is datamarked in the prompt
+
+**Context.** The system prompt tells the model that `untrusted_alert_data`
+may be attacker-written, but the text itself reached the model as ordinary
+prose, so injected instructions looked like any other instruction. The
+tripwire (DD-020) flags such alerts afterwards; it does not change what the
+model reads.
+
+**Decision.** In the model's view of untrusted alert text (rule title, user,
+timestamp, event keys and values), every whitespace character is replaced by
+`ˆ` (U+02C6), following the datamarking form of spotlighting, and the system
+prompt says this marks the text as data. Marking is applied before byte
+capping, so every cap still bounds the section. The marker is not `^`,
+because cmd.exe uses it in caret obfuscation; invisible format characters
+such as bidi overrides are kept, because they can be evidence. The alert,
+the tripwire, the summary and the audit log are unchanged.
+
+**Consequences.** Injected text in the prompt is visibly different from the
+system's instructions. The system prompt grows by 31 bytes, leaving 124
+tokens of headroom in the final and repair requests. The kind of whitespace
+(tab, newline or space) and a `ˆ` already in the data cannot be told apart in
+the model's view; the analyst and the tripwire use the original alert.
+Request bytes change for every run, and whether datamarking lowers injection
+success for a given model is measured in the formal evaluation.
