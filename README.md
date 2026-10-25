@@ -82,9 +82,10 @@ service.
 | Runbook retrieval with a minimum similarity score | Irrelevant context presented as guidance | Implemented |
 | Spotlighting (datamarking) of alert fields | Indirect prompt injection | Planned |
 | Injection tripwire raising severity | Alerts that address the model | Planned |
-| Severity floor: final severity never below the detection rule's level | Injection downgrading an alert | Planned |
+| Severity floor: final severity never below the detection rule's level; a draft below it is raised and flagged | Injection downgrading an alert | Implemented |
 | Draft citations restricted to evidence shown in this run and checked before a draft is accepted; unknown-tool errors and evidence left out of the prompt are not citable | Fabricated provenance | Implemented |
-| ATT&CK ID allow-list on output; citation relevance | Hallucinated findings | Planned |
+| ATT&CK allow-list on output: a technique must be current in the local snapshot, looked up and shown in this run, and cited by its lookup or the rule's tags; otherwise the rule's technique is used and the rejection flagged | Hallucinated findings | Implemented |
+| Citation relevance: technique claims are bound to their evidence and asset facts and enrichment gaps come from code; whether free text follows from its sources is measured in evaluation | Unsupported claims | Partial |
 | Model-call, tool-call and time limits; prompts bounded in bytes so they fit the context window, with output space reserved; investigation turns limited to 384 output tokens | Unbounded consumption; silent context truncation | Implemented |
 | Model-requested lookups recorded separately from enrichment | Untraceable model-steered evidence | Implemented |
 | Model endpoint must be an `http(s)` URL without credentials, path or query; no proxy or redirect handling; TLS verified | Alert data sent somewhere unintended | Implemented |
@@ -170,7 +171,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
 | Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. The metadata-only audit writer is implemented and callable, but not yet called automatically. Claude API (optional) and writing the audit log for every run from the CLI and service are planned | Partial |
-| Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Spotlighting, injection tripwire, severity floors, output evidence and ATT&CK validation, and summary-level fail-closed statuses are planned | Partial |
+| Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Output guardrails (severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, fail-closed summary statuses) are implemented. Spotlighting and the injection tripwire are planned | Partial |
 | Service and packaging | FastAPI `POST /triage`, CLI, Docker, GitHub Actions CI with security scanning | Planned |
 | Evaluation and threat model | Labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, published results | Planned |
 
