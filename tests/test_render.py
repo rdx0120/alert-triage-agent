@@ -188,7 +188,7 @@ def test_markdown_attack_stays_inert(base):
     assert structure(render_markdown(summary)) == expected_headings(summary)
 
 
-@pytest.mark.parametrize("ch", [" ", " ", "\r", "‮", "​", "\x00", "\x85", "\t"],
+@pytest.mark.parametrize("ch", ["\u2028", "\u2029", "\r", "\u202e", "\u200b", "\x00", "\x85", "\t"],
                          ids=lambda c: f"U+{ord(c):04X}")
 def test_separators_and_controls_are_shown_as_code_points(base, ch):
     """A line/paragraph separator, control or format character reaches the output raw."""
