@@ -14,11 +14,11 @@ reported as missing data instead of being filled in.
 > **Status:** early development. The data layer, the tool gateway, the four
 > read-only tools, alert ingestion, deterministic enrichment, the agent loop,
 > the rule-based baseline backend, the output guardrails (including the
-> injection tripwire and spotlighting) and the metadata-only audit writer are
-> implemented and tested. An Ollama backend for local models is implemented
-> and tested against a simulated server. The service and evaluation are
-> planned; see [Roadmap](#roadmap). No evaluation or model results are
-> published yet.
+> injection tripwire and spotlighting), the Markdown summary renderer and the
+> metadata-only audit writer are implemented and tested. An Ollama backend for
+> local models is implemented and tested against a simulated server. The
+> service and evaluation are planned; see [Roadmap](#roadmap). No evaluation
+> or model results are published yet.
 
 **Scope.** Lab project. All alerts, hosts and inventory data are synthetic;
 threat-intelligence data comes from public sources. It is not a production
@@ -92,6 +92,7 @@ service.
 | Model-requested lookups recorded separately from enrichment | Untraceable model-steered evidence | Implemented |
 | Model endpoint must be an `http(s)` URL without credentials, path or query; no proxy or redirect handling; TLS verified | Alert data sent somewhere unintended | Implemented |
 | Hard per-request deadline (never more than the time left in the run), bounded worker threads, 1 MiB reply cap; malformed replies are backend errors | Hung or hostile model endpoint | Implemented |
+| Markdown summary: only fixed template text is Markdown; every value is shown as code (fenced blocks and code spans that the value cannot close); control, format, surrogate and line or paragraph separator characters are shown as `<U+XXXX>`; model output is labelled; an oversized summary is rejected, never truncated. Targets CommonMark/GFM. The renderer (`triage.render.render_markdown`) is implemented and callable; calling it from the CLI and service is planned | Markdown injection in tickets, wikis and chat: remote images, links, raw HTML, forged headings, bidi reordering | Partial |
 | Metadata-only JSONL audit log of every lookup and model call (OpenTelemetry GenAI field names): no prompts, model text, tool arguments, tool data, error messages or endpoint; owner-only, append-only file. The writer (`triage.audit.write_audit_log`) is implemented and callable; `run_agent()` does not write a log by itself, and calling it for every run from the CLI and service is planned | Lack of accountability; sensitive data in logs | Partial |
 
 A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
@@ -108,6 +109,7 @@ A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
 | Agent loop | `triage/agent.py`, `triage/prompt.py` | Two phases (investigation with capped tool calls, then a schema-constrained draft); byte budgets; fixed stop reasons |
 | Model backends | `triage/backends/` | One `chat()` interface; rule-based baseline; Ollama over `http.client` with hard deadlines (no model results published yet) |
 | Output guardrails | `triage/guardrails.py`, `triage/tripwire.py` | Build the `TriageSummary`: severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, injection tripwire, fail-closed statuses |
+| Markdown rendering | `triage/render.py` | `render_markdown(summary)`: a fixed Markdown document for CommonMark/GFM renderers, with every value shown as code; fixed-message `ValueError` for an invalid or oversized summary. Called explicitly; not yet called automatically |
 | Audit log | `triage/audit.py` | Metadata-only JSONL projection of a run with fixed keys; refuses unsafe files and directories. Called explicitly with a run's result; not yet called automatically |
 | Tool gateway | `triage/tools/registry.py` | Allow-list, argument validation, error handling, deterministic evidence IDs |
 | `attack_lookup` | `triage/tools/attack.py` | ATT&CK Enterprise v20.0; retired IDs return their replacement |
@@ -174,7 +176,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
 | Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. The metadata-only audit writer is implemented and callable, but not yet called automatically. Claude API (optional) and writing the audit log for every run from the CLI and service are planned | Partial |
-| Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Output guardrails (severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, fail-closed summary statuses) are implemented. The injection tripwire and spotlighting are implemented | Partial |
+| Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Output guardrails (severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, fail-closed summary statuses) are implemented. The injection tripwire and spotlighting are implemented. The Markdown summary renderer is implemented and callable, but not yet called automatically | Partial |
 | Service and packaging | FastAPI `POST /triage`, CLI, Docker, GitHub Actions CI with security scanning | Planned |
 | Evaluation and threat model | Labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, published results | Planned |
 
@@ -186,6 +188,9 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 - Planned injection tests are hand-written and non-adaptive; they show
   resistance to known patterns, not to a determined attacker.
 - The runbook similarity threshold is a starting value, not yet calibrated.
+- The Markdown summary targets CommonMark/GFM renderers. Other markup
+  dialects, such as Slack mrkdwn or Jira wiki markup, parse text
+  differently and are not covered.
 - Not a replacement for an analyst: every recommendation requires human review.
 
 ## Data sources and attribution
