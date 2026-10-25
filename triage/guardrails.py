@@ -12,7 +12,9 @@ It enforces:
     techniques, by the rule's tags;
   - code-owned asset facts and enrichment gaps: the model cannot change them;
   - absence provenance: a missing-data finding resting only on lookups the
-    model made fail is dropped.
+    model made fail is dropped;
+  - the injection tripwire: alert text addressed to an AI system sets
+    injection_suspected and raises severity to at least high.
 Every intervention is recorded as a fixed anomaly code. Whether free text
 (rationale, steps, containment) follows from its sources is not checked here;
 that is measured in evaluation.
@@ -36,9 +38,12 @@ from .schemas import (
 from .tools import build_tools
 from .tools.attack import is_valid_technique
 from .tools.registry import Tool
+from .tripwire import injection_signals
 
 RAISED_RATIONALE = "Raised to the detection rule's level; the draft's severity was lower."
 NO_DRAFT_RATIONALE = "No accepted draft; severity is the detection rule's level."
+TRIPWIRE_MIN_SEVERITY = "high"
+TRIPWIRE_RATIONALE = "Raised to high: alert data appears to address an AI system."
 
 # The alert field each kind of gap depends on.
 _GAP_FIELD = {"technique": "rule_tags", "runbook": "rule_tags", "asset": "host", "vulnerability": "cves"}
@@ -142,6 +147,17 @@ def build_summary(result: AgentResult, alert: Alert, settings: Settings | None =
                                    rationale=clean(draft.severity.rationale),
                                    sources=list(draft.severity.sources))
 
+    # Injection tripwire, for every run. An alert whose data addresses an AI
+    # triage system suggests an attacker who knows the pipeline; escalation is
+    # the safe direction for a false positive. Severity already at or above
+    # high is unchanged.
+    tripwire = injection_signals(alert)
+    if tripwire.suspected and severity_rank(severity.value) < severity_rank(TRIPWIRE_MIN_SEVERITY):
+        anomalies.add("severity_raised_by_tripwire")
+        severity = SeverityFinding(value=TRIPWIRE_MIN_SEVERITY, rule_floor=alert.rule_level,
+                                   origin="tripwire", rationale=TRIPWIRE_RATIONALE,
+                                   sources=list(tripwire.fields))
+
     # Technique: allow-list and evidence binding, else the rule's technique.
     technique = None
     if draft is not None and draft.technique is not None:
@@ -216,7 +232,8 @@ def build_summary(result: AgentResult, alert: Alert, settings: Settings | None =
         backend=backend if backend in ("ollama", "heuristic") else "unknown",
         severity=severity, technique=technique, asset=asset, next_steps=next_steps,
         containment=containment, missing_data=missing,
-        anomalies=[a for a in get_args(Anomaly) if a in anomalies])
+        anomalies=[a for a in get_args(Anomaly) if a in anomalies],
+        injection_suspected=tripwire.suspected, injection_signals=list(tripwire.signals))
 
 
 def _citations_ok(draft: ModelDraft, alert: Alert, support, absence) -> bool:
