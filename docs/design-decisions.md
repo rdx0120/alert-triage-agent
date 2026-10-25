@@ -486,3 +486,40 @@ address (an IP address, or a name ending in a digits-only tag such as a port)
 is written as null, so the endpoint never reaches the log. Field names may
 change while the conventions are in development; the schema version marks
 changes.
+
+---
+
+## DD-019: Output guardrails turn a run into a summary, and code has the last word
+
+**Context.** An accepted draft cites only evidence the run showed the model
+(DD-015), but it is still model output. Injected alert text can argue a
+severity down; a model can name a technique that does not exist, is retired,
+or was never looked up; and a citation can point at real evidence that says
+nothing about the claim. Asset facts and enrichment gaps reach the output
+only if the model restates them, and a model can make a lookup fail on
+purpose and cite the failure as missing data.
+
+**Decision.** `build_summary()` runs after the agent loop and always returns a
+`TriageSummary`. The final severity is never below the detection rule's
+level; a lower draft is raised to it, with a fixed rationale and an anomaly.
+A technique is kept only if it is current in the local ATT&CK snapshot, was
+looked up and shown with its data in this run, and is cited by that lookup or,
+for the rule's own techniques, by the rule's tags; otherwise the rule's
+technique is used, or none. The asset finding and every enrichment gap come
+from code, never the model. A missing-data finding that rests only on lookups
+the model made fail is dropped. Every draft citation is re-checked against
+the run record before use. Runs that did not complete, or whose draft fails
+the re-check, get a fail-closed status and only code-owned findings. Every
+finding records whether it came from the rule, enrichment or the model, and
+every intervention is recorded as a fixed anomaly code.
+
+**Consequences.** A model can raise severity but never lower it, cannot add an
+unknown or unsupported technique, and cannot change what is known about the
+asset. Findings that code cannot verify (steps, containment, rationale) are
+kept as model output, cite their sources, and are judged in evaluation;
+containment still needs human approval. Spotlighting and an injection
+tripwire (planned) address the injection itself; this stage limits what a
+successful injection can change. The technique's `basis` says what supports
+the label (the rule's ATT&CK mapping, a model-requested lookup, or nothing),
+never that the behaviour occurred; whether an alert is a true positive is not
+decided here.

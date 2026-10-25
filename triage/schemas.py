@@ -312,52 +312,82 @@ class AgentResult(Strict):
 
 # --- Output --------------------------------------------------------------
 
-Confidence = Literal["confirmed", "likely", "unknown"]
-
-
-class TechniqueFinding(Strict):
-    technique_id: str | None = Field(default=None, pattern=TECHNIQUE_ID_PATTERN)
-    name: str | None = None
-    confidence: Confidence
-    evidence_ids: list[str] = Field(default_factory=list)
+# What supports a technique label, never whether the behaviour happened:
+# rule_mapping = the detection rule's own ATT&CK mapping, resolved to a
+# current technique; lookup_only = model-proposed, backed only by a lookup
+# the model requested; none = no supported technique.
+TechniqueBasis = Literal["rule_mapping", "lookup_only", "none"]
+FindingOrigin = Literal["rule", "model", "none"]
+MissingOrigin = Literal["enrichment", "model"]
+SummaryStatus = Literal["triaged", "insufficient_data", "budget_exceeded", "error"]
+# Fixed order: anomalies are listed in this order, each at most once.
+Anomaly = Literal["draft_unavailable", "draft_invalid", "draft_citation_invalid",
+                  "severity_raised_to_rule_floor",
+                  "technique_not_current_attack", "technique_not_looked_up",
+                  "technique_not_bound_to_evidence", "missing_data_model_absence_only"]
 
 
 class SeverityFinding(Strict):
     value: Severity
-    rule_floor: Severity  # set by code from the detection rule; the final value is never below it
-    rationale: str
-    evidence_ids: list[str] = Field(default_factory=list)
+    rule_floor: Severity       # the detection rule's level; value is never below it
+    origin: Literal["rule", "model"]
+    rationale: str = Field(max_length=600)
+    sources: list[Source] = Field(max_length=MAX_SOURCES)
+
+
+class TechniqueFinding(Strict):
+    technique_id: str | None = Field(default=None, pattern=TECHNIQUE_ID_PATTERN)
+    name: str | None = None    # from the local ATT&CK snapshot, never the model
+    basis: TechniqueBasis
+    origin: FindingOrigin
+    sources: list[Source] = Field(default_factory=list, max_length=MAX_SOURCES)
 
 
 class AssetFinding(Strict):
+    # Every field comes from the asset lookup, never the model.
     host: str | None
     criticality: Literal["low", "medium", "high", "critical", "unknown"]
     exposure: Literal["internal", "internet-facing", "unknown"]
     owner: str | None = None
-    evidence_ids: list[str] = Field(default_factory=list)
+    sources: list[Source] = Field(default_factory=list, max_length=MAX_SOURCES)
 
 
 class NextStep(Strict):
-    step: str
-    evidence_ids: list[str] = Field(default_factory=list)
+    step: str = Field(max_length=300)
+    sources: list[Source] = Field(min_length=1, max_length=MAX_SOURCES)
 
 
 class ContainmentAction(Strict):
-    action: str
+    action: str = Field(max_length=300)
+    sources: list[Source] = Field(default_factory=list, max_length=MAX_SOURCES)
     # Literal[True]: a False here fails validation. The agent can suggest, never approve.
     requires_human_approval: Literal[True] = True
 
 
+class MissingItem(Strict):
+    kind: Literal["technique", "asset", "vulnerability", "runbook", "other"]
+    description: str = Field(max_length=200)
+    origin: MissingOrigin
+    sources: list[Source] = Field(default_factory=list, max_length=MAX_SOURCES)
+
+
 class TriageSummary(Strict):
-    alert_id: str
-    status: Literal["triaged", "insufficient_data", "budget_exceeded", "error"]
-    plan: str = ""
-    technique: TechniqueFinding
+    """The output after code-enforced guardrails (triage.guardrails).
+
+    Every finding records whether it came from the rule, from enrichment or
+    from the model. Severity is never below the rule's level, asset facts
+    and enrichment gaps come only from code, and containment always needs
+    human approval.
+    """
+    alert_id: str = Field(pattern=ALERT_ID_PATTERN)
+    run_id: str = Field(pattern=RUN_ID_PATTERN)
+    status: SummaryStatus
+    backend: Literal["ollama", "heuristic", "unknown"]
     severity: SeverityFinding
+    technique: TechniqueFinding
     asset: AssetFinding
     next_steps: list[NextStep] = Field(default_factory=list)
     containment: list[ContainmentAction] = Field(default_factory=list)
-    missing_data: list[str] = Field(default_factory=list)
-    injection_suspected: bool = False
-    anomalies: list[str] = Field(default_factory=list)
-    model: str = ""
+    missing_data: list[MissingItem] = Field(default_factory=list)
+    anomalies: list[Anomaly] = Field(default_factory=list)
+    injection_suspected: bool = False   # set by the planned tripwire (G2); always False until then
