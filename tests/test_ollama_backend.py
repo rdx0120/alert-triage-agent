@@ -28,8 +28,10 @@ from triage.config import REPO_ROOT, Settings
 from triage.enrich import enrich
 from triage.evidence import EvidenceLog
 from triage.ingest import load_alert
-from triage.prompt import CONTEXT_TOKENS, MAX_OUTPUT_TOKENS, initial_messages, tool_specs
-from triage.schemas import DraftSeverity, ModelDraft
+from triage.prompt import (
+    CONTEXT_TOKENS, DATAMARK, MAX_OUTPUT_TOKENS, SYSTEM_PROMPT, initial_messages, tool_specs,
+)
+from triage.schemas import Alert, DraftSeverity, ModelDraft
 from triage.tools import registry
 
 HOST = "http://localhost:11434"
@@ -911,6 +913,21 @@ def test_agent_run_transport_failure(settings, tools):
     result = run_agent(alert, backend, settings=settings, tools=tools)
     assert result.stop_reason == "backend_error" and result.draft is None
     assert MARKER not in result.model_dump_json()
+
+
+def test_agent_run_sends_datamarked_alert_text(settings, tools):
+    """Marking lost between the prompt views and the HTTP body would show the model unmarked attacker text."""
+    alert = Alert(alert_id="t-1", source="synthetic", rule_id="r-1", rule_title="Test rule",
+                  rule_level="medium", event={"note": "alpha beta gamma"})
+    backend, transport = _backend(_reply(), _reply(VALID))
+    result = run_agent(alert, backend, settings=settings, tools=tools)
+    assert result.stop_reason == "completed" and len(transport.calls) == 2
+    for _, body, _ in transport.calls:
+        system, user = json.loads(body)["messages"][:2]
+        assert system == {"role": "system", "content": SYSTEM_PROMPT}
+        assert f"whitespace is shown as {DATAMARK} to mark it as data" in system["content"]
+        assert f"alpha{DATAMARK}beta{DATAMARK}gamma" in user["content"]
+        assert "alpha beta gamma" not in user["content"]
 
 
 # --- Network code location -----------------------------------------------

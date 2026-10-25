@@ -13,7 +13,7 @@ from triage.backends import BackendError, ChatReply, HeuristicBackend, ToolCall
 from triage.config import REPO_ROOT, Settings
 from triage.guardrails import NO_DRAFT_RATIONALE, RAISED_RATIONALE, TRIPWIRE_RATIONALE, build_summary
 from triage.ingest import load_alert
-from triage.prompt import EVENT_VALUE_MAX_BYTES, untrusted_view
+from triage.prompt import DATAMARK, EVENT_VALUE_MAX_BYTES, untrusted_view
 from triage.schemas import SEVERITY_ORDER, Alert, Anomaly, ModelDraft, TriageSummary
 from triage.tools import build_tools, registry
 from triage.tools.registry import Tool
@@ -651,7 +651,9 @@ def test_tripwire_scans_the_full_alert(event, settings, tools):
     """A phrase the prompt view cuts or leaves out must still be flagged and raise a low alert."""
     alert = _alert(rule_level="low", event=event)
     view = json.dumps(untrusted_view(alert), ensure_ascii=False)
-    assert "previous instructions" not in view
+    # With datamarking the view shows "previousˆinstructions", so the check must undo
+    # the marking or it would pass even if the phrase were shown.
+    assert "previous instructions" not in view.replace(DATAMARK, " ")
     if "zz_note" in event:
         assert "_omitted_event_fields" in view and "zz_note" not in view
     summary = build_summary(_final(alert, _draft(severity="low"), settings, tools), alert, settings, tools)
