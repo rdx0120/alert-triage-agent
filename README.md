@@ -12,12 +12,13 @@ call passes through a validating gateway, and empty or failed lookups are
 reported as missing data instead of being filled in.
 
 > **Status:** early development. The data layer, the tool gateway, the four
-> read-only tools, alert ingestion, deterministic enrichment, the agent loop
-> and the rule-based baseline backend are implemented and tested. An Ollama
-> backend for local models is implemented and tested against a simulated
-> server; it has not yet been run against a model. Output guardrails, the
-> service and evaluation are planned; see [Roadmap](#roadmap). No evaluation
-> results are published yet.
+> read-only tools, alert ingestion, deterministic enrichment, the agent loop,
+> the rule-based baseline backend, the output guardrails (including the
+> injection tripwire and spotlighting) and the metadata-only audit writer are
+> implemented and tested. An Ollama backend for local models is implemented
+> and tested against a simulated server. The service and evaluation are
+> planned; see [Roadmap](#roadmap). No evaluation or model results are
+> published yet.
 
 **Scope.** Lab project. All alerts, hosts and inventory data are synthetic;
 threat-intelligence data comes from public sources. It is not a production
@@ -48,8 +49,9 @@ service.
                │                      asset_context · runbook_search
                ▼                      (local, read-only snapshots)
  ┌─────────────────────────────┐
- │ output guardrails (code)    │  evidence-ID check · ATT&CK ID check ·     [planned]
- │                             │  severity floor · human-approval flag
+ │ output guardrails (code)    │  citation re-check · ATT&CK allow-list ·   [implemented]
+ │                             │  severity floor · injection tripwire ·
+ │                             │  fail-closed statuses · human approval
  └─────────────┬───────────────┘
                ▼
  TriageSummary (JSON + Markdown)  ·  JSONL audit log
@@ -59,9 +61,9 @@ service.
 
 | Input | Trust | Handling |
 |---|---|---|
-| Alert fields (command lines, usernames, paths) | Untrusted | Validated and size-capped; strict patterns before reaching any lookup; sent in a separate prompt section that the instructions describe as data; spotlighting (datamarking) is planned. The model may still be influenced by this text, so the output is not trusted either |
+| Alert fields (command lines, usernames, paths) | Untrusted | Validated and size-capped; strict patterns before reaching any lookup; sent in a separate prompt section that the instructions describe as data; in that section every whitespace character is datamarked as `ˆ` (spotlighting). The model may still be influenced by this text, so the output is not trusted either |
 | Local snapshots (ATT&CK, KEV/EPSS, assets, runbooks) | Trusted, versioned | Built offline by `scripts/`, with source version and hash recorded |
-| Model output | Untrusted | Schema-validated draft (`ModelDraft`); every finding lists sources, and a draft is accepted only if each cited evidence ID was shown to the model in this run and each cited alert field is present (missing-data findings may cite absence). Whether a citation supports its claim is not checked |
+| Model output | Untrusted | Schema-validated draft (`ModelDraft`); every finding lists sources, and a draft is accepted only if each cited evidence ID was shown to the model in this run and each cited alert field is present (missing-data findings may cite absence). The output guardrails then re-check every citation, bind a technique to its own lookup, keep severity at or above the rule's level and take asset facts and gaps from code; whether free text follows from its sources is not checked |
 
 ## Security controls
 
@@ -104,7 +106,8 @@ A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
 | Sample alerts | `samples/alerts/` | Synthetic Wazuh and Sigma inputs; Sigma samples generated from the vendored rule fixtures |
 | Enrichment | `triage/enrich.py`, `triage/evidence.py` | Deterministic lookups before the model; shared evidence log; explicit gaps; `complete` / `degraded` status |
 | Agent loop | `triage/agent.py`, `triage/prompt.py` | Two phases (investigation with capped tool calls, then a schema-constrained draft); byte budgets; fixed stop reasons |
-| Model backends | `triage/backends/` | One `chat()` interface; rule-based baseline; Ollama over `http.client` with hard deadlines (not yet run against a model) |
+| Model backends | `triage/backends/` | One `chat()` interface; rule-based baseline; Ollama over `http.client` with hard deadlines (no model results published yet) |
+| Output guardrails | `triage/guardrails.py`, `triage/tripwire.py` | Build the `TriageSummary`: severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, injection tripwire, fail-closed statuses |
 | Audit log | `triage/audit.py` | Metadata-only JSONL projection of a run with fixed keys; refuses unsafe files and directories. Called explicitly with a run's result; not yet called automatically |
 | Tool gateway | `triage/tools/registry.py` | Allow-list, argument validation, error handling, deterministic evidence IDs |
 | `attack_lookup` | `triage/tools/attack.py` | ATT&CK Enterprise v20.0; retired IDs return their replacement |
