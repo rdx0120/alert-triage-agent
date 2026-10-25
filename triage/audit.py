@@ -28,7 +28,7 @@ from pydantic import ValidationError
 from .backends.ollama import MODEL_NAME_PATTERN
 from .prompt import INVESTIGATION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS
 from .schemas import (
-    ALERT_ID_PATTERN, RUN_ID_PATTERN, TECHNIQUE_ID_PATTERN, AgentResult, Alert, BudgetDetail, Enrichment,
+    ALERT_ID_PATTERN, RUN_ID_PATTERN, TECHNIQUE_ID_PATTERN, AgentResult, Alert, BudgetDetail, Enrichment, Gap,
     GapKind, GapReason, ModelCallRecord, Severity, StopReason, ToolCallRecord, TriageSummary,
 )
 
@@ -97,18 +97,28 @@ def _is_duration(value: object) -> bool:
     return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
 
+def _member(value: object, allowed: tuple) -> bool:
+    # type(): a str subclass can override __eq__ to pass the membership test,
+    # and json.dumps would then write its real text.
+    return type(value) is str and value in allowed
+
+
 def _run_values_in_schema(result: AgentResult, alert: Alert) -> bool:
     # Every run-level value the projection writes, or whose length it writes.
     # The allowed sets come from the schema, so they cannot drift from it.
     draft = result.draft
+    gaps = result.enrichment.gaps
     return (
-        alert.source in get_args(Alert.model_fields["source"].annotation)
-        and alert.rule_level in get_args(Severity)
-        and (draft is None or draft.severity.value in get_args(Severity))
-        and result.enrichment.status in get_args(Enrichment.model_fields["status"].annotation)
-        and all(g.kind in get_args(GapKind) and g.reason in get_args(GapReason) for g in result.enrichment.gaps)
-        and result.stop_reason in get_args(StopReason)
-        and (result.budget_detail is None or result.budget_detail in get_args(BudgetDetail))
+        _member(alert.source, get_args(Alert.model_fields["source"].annotation))
+        and _member(alert.rule_level, get_args(Severity))
+        and (draft is None or _member(draft.severity.value, get_args(Severity)))
+        and _member(result.enrichment.status, get_args(Enrichment.model_fields["status"].annotation))
+        # The container first, so a replaced one fails here with the fixed
+        # message instead of a TypeError or AttributeError below.
+        and isinstance(gaps, list) and all(isinstance(g, Gap) for g in gaps)
+        and all(_member(g.kind, get_args(GapKind)) and _member(g.reason, get_args(GapReason)) for g in gaps)
+        and _member(result.stop_reason, get_args(StopReason))
+        and (result.budget_detail is None or _member(result.budget_detail, get_args(BudgetDetail)))
         and _is_duration(result.duration_s)
         and _is_duration(result.enrichment_duration_s)
         and type(result.tool_calls) is int and result.tool_calls >= 0
@@ -165,8 +175,10 @@ def audit_records(result: AgentResult, alert: Alert, *, summary: TriageSummary |
     # validate assignment, so nothing is written unless every record is
     # within its schema. The validated copies are the ones projected.
     try:
-        model_calls = [ModelCallRecord.model_validate(r.model_dump()) for r in result.model_calls]
-        tool_records = [ToolCallRecord.model_validate(r.model_dump()) for r in result.tool_records]
+        # warnings=False: a serializer warning for a wrongly typed value
+        # quotes that value; the value is still rejected by validation.
+        model_calls = [ModelCallRecord.model_validate(r.model_dump(warnings=False)) for r in result.model_calls]
+        tool_records = [ToolCallRecord.model_validate(r.model_dump(warnings=False)) for r in result.tool_records]
     except ValidationError:
         raise ValueError("a model call or lookup record is outside its schema") from None
     # Same reason for the values the run record takes directly from the

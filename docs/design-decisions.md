@@ -489,6 +489,10 @@ changes.
 
 The summary record and schema version 2 are added in DD-023.
 
+Run-level enum values must be plain strings, and the gaps container a list of
+gaps, so a substituted value is refused with the fixed message instead of
+being written or raising another error.
+
 ---
 
 ## DD-019: Output guardrails turn a run into a summary, and code has the last word
@@ -567,6 +571,9 @@ to the summary, but model-derived findings may still quote alert text. The
 model still reads the injected text; spotlighting (planned) addresses that.
 
 Spotlighting is implemented in DD-021.
+
+The consistency checks between the patterns, the signal codes and the scanned
+fields raise at import, so they also hold under `python -O`.
 
 ---
 

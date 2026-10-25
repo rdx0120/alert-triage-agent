@@ -54,14 +54,18 @@ PATTERNS: dict[str, str] = {
 }
 
 # The signal codes are a schema literal; the patterns must name the same codes
-# in the same order, so the summary lists signals in a fixed order.
-assert list(PATTERNS) == list(get_args(InjectionSignal))
+# in the same order, so the summary lists signals in a fixed order. An
+# explicit raise, not assert: python -O removes asserts, and a mismatch must
+# stop the import in every mode.
+if list(PATTERNS) != list(get_args(InjectionSignal)):
+    raise RuntimeError("tripwire patterns do not match the InjectionSignal codes")
 _COMPILED = [(code, re.compile(pattern)) for code, pattern in PATTERNS.items()]
 
 # The alert fields an attacker can write. Identifiers, tags, host and CVEs are
 # pattern-validated or come from the rule set, so they are not scanned.
 SCANNED_FIELDS = ("rule_title", "user", "timestamp", "event")
-assert all(f in get_args(AlertField) for f in SCANNED_FIELDS)
+if not all(f in get_args(AlertField) for f in SCANNED_FIELDS):
+    raise RuntimeError("tripwire scanned fields are not all AlertField names")
 
 
 def normalize(text: str) -> str:
