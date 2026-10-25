@@ -81,7 +81,7 @@ service.
 | "Not found" recorded as a gap; a failed lookup marks the enrichment degraded | Broken lookups read as "nothing found" | Implemented |
 | Runbook retrieval with a minimum similarity score | Irrelevant context presented as guidance | Implemented |
 | Spotlighting (datamarking) of alert fields | Indirect prompt injection | Planned |
-| Injection tripwire raising severity | Alerts that address the model | Planned |
+| Injection tripwire: alert text addressed to an AI system (instruction overrides, chat markup, verdict steering and similar, matched after Unicode normalization) sets `injection_suspected`, lists the signals and raises severity to at least high | Alerts that address the model | Implemented |
 | Severity floor: final severity never below the detection rule's level; a draft below it is raised and flagged | Injection downgrading an alert | Implemented |
 | Draft citations restricted to evidence shown in this run and checked before a draft is accepted; unknown-tool errors and evidence left out of the prompt are not citable | Fabricated provenance | Implemented |
 | ATT&CK allow-list on output: a technique must be current in the local snapshot, looked up and shown in this run, and cited by its lookup or the rule's tags; otherwise the rule's technique is used and the rejection flagged | Hallucinated findings | Implemented |
@@ -171,7 +171,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
 | Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. The metadata-only audit writer is implemented and callable, but not yet called automatically. Claude API (optional) and writing the audit log for every run from the CLI and service are planned | Partial |
-| Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Output guardrails (severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, fail-closed summary statuses) are implemented. Spotlighting and the injection tripwire are planned | Partial |
+| Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Output guardrails (severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, fail-closed summary statuses) are implemented. The injection tripwire is implemented. Spotlighting is planned | Partial |
 | Service and packaging | FastAPI `POST /triage`, CLI, Docker, GitHub Actions CI with security scanning | Planned |
 | Evaluation and threat model | Labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, published results | Planned |
 

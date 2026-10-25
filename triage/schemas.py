@@ -312,6 +312,10 @@ class AgentResult(Strict):
 
 # --- Output --------------------------------------------------------------
 
+InjectionSignal = Literal["instruction_override", "new_instructions", "prompt_exfiltration",
+                          "role_assignment", "ai_address", "chat_markup", "verdict_steering",
+                          "suppression"]
+
 # What supports a technique label, never whether the behaviour happened:
 # rule_mapping = the detection rule's own ATT&CK mapping, resolved to a
 # current technique; lookup_only = model-proposed, backed only by a lookup
@@ -322,7 +326,7 @@ MissingOrigin = Literal["enrichment", "model"]
 SummaryStatus = Literal["triaged", "insufficient_data", "budget_exceeded", "error"]
 # Fixed order: anomalies are listed in this order, each at most once.
 Anomaly = Literal["draft_unavailable", "draft_invalid", "draft_citation_invalid",
-                  "severity_raised_to_rule_floor",
+                  "severity_raised_to_rule_floor", "severity_raised_by_tripwire",
                   "technique_not_current_attack", "technique_not_looked_up",
                   "technique_not_bound_to_evidence", "missing_data_model_absence_only"]
 
@@ -330,7 +334,7 @@ Anomaly = Literal["draft_unavailable", "draft_invalid", "draft_citation_invalid"
 class SeverityFinding(Strict):
     value: Severity
     rule_floor: Severity       # the detection rule's level; value is never below it
-    origin: Literal["rule", "model"]
+    origin: Literal["rule", "model", "tripwire"]
     rationale: str = Field(max_length=600)
     sources: list[Source] = Field(max_length=MAX_SOURCES)
 
@@ -390,4 +394,5 @@ class TriageSummary(Strict):
     containment: list[ContainmentAction] = Field(default_factory=list)
     missing_data: list[MissingItem] = Field(default_factory=list)
     anomalies: list[Anomaly] = Field(default_factory=list)
-    injection_suspected: bool = False   # set by the planned tripwire (G2); always False until then
+    injection_suspected: bool = False   # set by the tripwire (triage.tripwire) from attacker-writable alert fields
+    injection_signals: list[InjectionSignal] = Field(default_factory=list)

@@ -523,3 +523,41 @@ successful injection can change. The technique's `basis` says what supports
 the label (the rule's ATT&CK mapping, a model-requested lookup, or nothing),
 never that the behaviour occurred; whether an alert is a true positive is not
 decided here.
+
+---
+
+## DD-020: An injection tripwire flags alert text addressed to an AI system and escalates
+
+**Context.** Alert fields such as the rule title, user and event values can be
+written by an attacker, and an attacker who knows alerts are triaged by a
+model can write text aimed at it. The output guardrails (DD-019) already stop
+such text from lowering severity below the rule's level or changing asset
+facts, but an injected alert at its rule's level passed unnoticed, and
+`injection_suspected` was never set.
+
+**Decision.** `triage/tripwire.py` scans the attacker-writable fields (rule
+title, user, timestamp, event keys and string values), each separately,
+after Unicode NFKC normalization, removal of invisible format characters,
+whitespace collapsing and case-folding. Eight fixed signals cover instruction
+overrides, new instructions, prompt exfiltration, role assignment, addressing
+an AI, chat markup, verdict steering and requests not to escalate. Only the
+signal codes and the field names are recorded, never the matched text. The
+scan covers the full canonical alert, not the capped view the prompt shows,
+so it detects suspicious content in the alert, not proof that the model saw
+or obeyed it. When any signal matches, the summary sets
+`injection_suspected`, lists the signals, and raises severity to at least
+high with a fixed rationale citing the matched fields; severity already at or
+above high is unchanged. Model-derived findings are not changed (DD-019
+governs them).
+
+**Consequences.** An alert that tries to talk to the triage model is
+escalated and visibly flagged, whatever the model replied and whether or not
+the run completed. Patterns are a tripwire, not a classifier: paraphrases
+they do not cover pass unflagged, and a benign field that happens to match is
+over-escalated, which is the safe direction for a single alert. Raising to
+high can add analyst workload, through false positives or through an
+attacker deliberately generating noisy alerts; the recorded signals and
+fields let analysts and later tuning see why, and the formal evaluation
+measures detection and false-positive rates. The tripwire adds no input text
+to the summary, but model-derived findings may still quote alert text. The
+model still reads the injected text; spotlighting (planned) addresses that.
