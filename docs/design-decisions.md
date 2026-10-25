@@ -592,3 +592,39 @@ tokens of headroom in the final and repair requests. The kind of whitespace
 the model's view; the analyst and the tripwire use the original alert.
 Request bytes change for every run, and whether datamarking lowers injection
 success for a given model is measured in the formal evaluation.
+
+---
+
+## DD-022: The Markdown summary is a fixed template with every value shown as code
+
+**Context.** The summary holds model text, which can quote attacker-written
+alert text, and strings from local data. Rendered as ordinary Markdown in a
+ticket, wiki or chat, such text can load a remote image, inject HTML or
+links, forge a heading such as "Verdict: benign", or reorder the display
+with bidi controls. The output schema bounds free text but not the number of
+findings or the length of the technique name and the asset host and owner.
+
+**Decision.** `render_markdown()` produces a fixed template whose only
+Markdown is its own text. Free text goes in fenced code blocks opened with a
+run of `~` longer than any run in the content; short values go in inline
+code spans delimited by a backtick run longer than any in the value.
+Control, format, surrogate and line and paragraph separator characters
+(categories Cc, Cf, Cs, Zl and Zp, so U+2028 and U+2029 as well) are shown
+as `<U+XXXX>`, except a newline inside a fenced block. There are no tables,
+because a pipe splits a table cell even inside a code span. Headings label
+model output, and a fixed footer states that containment needs human
+approval. The summary is revalidated first. Renderer limits (8 next steps,
+5 containment suggestions, 30 missing-data items, 9 anomalies, 8 signals,
+and 256 characters for the technique name and the asset host and owner) and
+a 192 KiB output cap bound the result. A summary over them raises a
+fixed-message `ValueError` and is never truncated. The output schema is
+unchanged.
+
+**Consequences.** Values are inert in CommonMark and GFM renderers and
+cannot create structure; other dialects, such as Slack mrkdwn and Jira wiki
+markup, are not covered. Values are harder to read than prose, and literal
+text such as `<U+2028>` looks the same as an escaped character. The limits
+follow the pipeline's caps and tests tie them together, so a later cap
+change must update the renderer. Rendering does not make model text true;
+the labels and footer say so. The renderer is called explicitly; calling it
+from the CLI and service is planned.
