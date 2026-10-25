@@ -236,7 +236,7 @@ def _check_structure(result, records):
     assert actual == expected
     assert len(records) == 1 + len(result.tool_records) + len(result.model_calls)
     assert [r["triage.seq"] for r in records] == list(range(len(records)))
-    assert all(r["triage.audit.schema_version"] == 1 for r in records)
+    assert all(r["triage.audit.schema_version"] == 2 for r in records)
     assert all(r["gen_ai.conversation.id"] == result.run_id for r in records)
     for record in records:
         assert list(record) == KEYS[record["event.name"]]
@@ -290,7 +290,7 @@ def test_exact_values(settings, tools):
                            wall_clock=lambda: WALL, run_id=RUN_ID)
     assert result.stop_reason == "completed"
     records = audit_records(result, _powershell())
-    common = {"triage.audit.schema_version": 1, "gen_ai.conversation.id": RUN_ID}
+    common = {"triage.audit.schema_version": 2, "gen_ai.conversation.id": RUN_ID}
     run = records[0]
     assert run == {
         "timestamp": "2026-01-02T03:04:05.678Z", "event.name": "triage.run", **common, "triage.seq": 0,
