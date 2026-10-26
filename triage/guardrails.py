@@ -114,9 +114,10 @@ def build_summary(result: AgentResult, alert: Alert, settings: Settings | None =
         anomalies.add("draft_invalid")
     else:
         # Revalidated because a result can be changed after the run without
-        # validation (attribute assignment, model_copy).
+        # validation (attribute assignment, model_copy). warnings=False: a
+        # serializer warning for a wrongly typed value quotes that value.
         try:
-            candidate = ModelDraft.model_validate(result.draft.model_dump())
+            candidate = ModelDraft.model_validate(result.draft.model_dump(warnings=False))
         except ValidationError:
             anomalies.add("draft_invalid")
         else:
