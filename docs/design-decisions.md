@@ -681,3 +681,42 @@ carries its own version, so a file can hold version-1 and version-2 records
 and a consumer reads the version per line. A caller that has only the run can
 still write the log without a summary. The writer is still called explicitly;
 writing the log for every run from the CLI and service is planned.
+
+---
+
+## DD-024: The CLI runs one alert end to end, audit first, with fixed errors
+
+**Context.** The renderer and the audit writer existed but nothing called
+them, and the evaluation needs one entry point that produces every output the
+same way. A command line adds its own risks: messages from argparse,
+ingestion or the file layer can echo alert text, paths or the endpoint;
+model text on a terminal can carry escape sequences; output files can
+collide, be redirected or be left half-written; and several runs can append
+to one log at once.
+
+**Decision.** `python -m triage --format {wazuh,sigma} ALERT` reads one alert
+(a regular file or standard input, at most 256 KiB), runs the agent and the
+guardrails, and prints the summary as one line of ASCII-only JSON. Settings
+come only from the environment. The audit log (`logs/audit.jsonl` by
+default) is appended before anything is printed or written; `--no-audit-log`
+must be given explicitly and is noted on standard error. With `--out DIR`,
+`<run_id>.json` and `<run_id>.md` are created exclusively in a checked
+directory, all or nothing: on a failure or an interrupt, only the files this
+run created are removed. File names come from the run ID, never from alert data. Directories
+are checked before the model runs and again when used. Every failure prints
+one fixed message, at most with an `errno` name or an exception class name,
+and exits with a fixed code: 0 for a produced summary whatever its status, 1
+internal, 2 usage or configuration, 3 input, 4 audit log, 5 outputs, 130
+interrupted. The audit log and `--out` need POSIX; elsewhere the CLI is
+standard output only.
+
+**Consequences.** Every CLI run is audited unless the operator opts out, and
+no output exists without its audit record. Error messages carry no detail
+from lower layers, so diagnosing a rejected alert needs `load_alert()`
+directly. A backend failure is a summary with status `error`, not a CLI
+failure. The directories above the log and output directories are trusted,
+not checked. The cleanup handles exceptions and interrupts, not crashes: a
+`kill -9` or power loss while writing can still leave a partial output file.
+Windows can run the CLI only without an audit log and without `--out`; input
+files are opened there without the POSIX-only flags, with the same
+regular-file check and size limit.

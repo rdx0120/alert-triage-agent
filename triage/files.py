@@ -92,6 +92,59 @@ def open_private_file(dir_fd: int, name: str, *, what: str, append: bool) -> int
     return fd
 
 
+class FilesNotWritten(OSError):
+    """write_new_files() failed or was interrupted. Every file it created is removed unless removed is False.
+
+    collision is True when a name already existed: that file was not created
+    here and is never touched. interrupted is True when the cause was a
+    KeyboardInterrupt.
+    """
+
+    def __init__(self, message: str, *, collision: bool, removed: bool, interrupted: bool = False) -> None:
+        super().__init__(message)
+        self.collision = collision
+        self.removed = removed
+        self.interrupted = interrupted
+
+
+def write_new_files(dir_fd: int, path: str, items: list[tuple[str, bytes]], *, what: str) -> None:
+    """Create each (name, data) in dir_fd (at path) exclusively, write and sync it; then sync the directories.
+
+    All or nothing: if any step fails or is interrupted, the files created by
+    this call are removed, and only those. An OSError or a KeyboardInterrupt
+    becomes FilesNotWritten (interrupted says which); any other exception is
+    re-raised after the cleanup. A file that already existed makes O_EXCL fail,
+    so it is never written, followed or removed. This is exception cleanup,
+    not crash atomicity: SIGKILL or power loss mid-write can still leave
+    partial files.
+    """
+    created: list[str] = []
+    try:
+        for name, data in items:
+            fd = open_private_file(dir_fd, name, what=what, append=False)
+            created.append(name)
+            try:
+                write_all(fd, data, what=what)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        sync_dir_and_parent(dir_fd, path)
+    except BaseException as error:
+        removed = True
+        for name in created:
+            try:
+                os.unlink(name, dir_fd=dir_fd)
+            except OSError:
+                removed = False
+        if isinstance(error, KeyboardInterrupt):
+            raise FilesNotWritten(f"{what} writing was interrupted", collision=False, removed=removed,
+                                  interrupted=True) from None
+        if isinstance(error, OSError):
+            raise FilesNotWritten(f"{what} could not be written", collision=isinstance(error, FileExistsError),
+                                  removed=removed) from None
+        raise
+
+
 def write_all(fd: int, data: bytes, *, what: str) -> None:
     """Write every byte; a write that makes no progress raises instead of looping."""
     view = memoryview(data)
