@@ -493,6 +493,19 @@ Run-level enum values must be plain strings, and the gaps container a list of
 gaps, so a substituted value is refused with the fixed message instead of
 being written or raising another error.
 
+Writers no longer have to be one per file: each append holds an exclusive lock
+on the file, waiting at most ten seconds for it. The file is opened relative
+to a descriptor of its checked directory, so the directory cannot be swapped
+between the check and the open; its ancestors are still trusted. A failed
+write or sync is rolled back to the file's previous size, and a log whose last
+record is partial is refused, not appended to. Before the writer returns,
+and while it still holds the lock, the records, the file's entry in its
+directory and the directory's entry in its parent are synced to disk on
+every append, so no writer relies on another writer's unfinished sync. A
+directory another writer created first is checked like any existing one. A
+run result whose containers are not the expected types is refused with a
+fixed message.
+
 ---
 
 ## DD-019: Output guardrails turn a run into a summary, and code has the last word

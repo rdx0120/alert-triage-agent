@@ -19,17 +19,24 @@ import json
 import math
 import os
 import re
-import stat
+import time
 from datetime import datetime, timedelta
 from typing import get_args
 
+try:
+    import fcntl
+except ImportError:   # not on Windows; write_audit_log() then refuses to run
+    fcntl = None
+
 from pydantic import ValidationError
 
+from . import files
 from .backends.ollama import MODEL_NAME_PATTERN
 from .prompt import INVESTIGATION_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS
 from .schemas import (
-    ALERT_ID_PATTERN, RUN_ID_PATTERN, TECHNIQUE_ID_PATTERN, AgentResult, Alert, BudgetDetail, Enrichment, Gap,
-    GapKind, GapReason, ModelCallRecord, Severity, StopReason, ToolCallRecord, TriageSummary,
+    ALERT_ID_PATTERN, RUN_ID_PATTERN, TECHNIQUE_ID_PATTERN, AgentResult, Alert, BudgetDetail, DraftSeverity,
+    DraftTechnique, Enrichment, Gap, GapKind, GapReason, ModelCallRecord, ModelDraft, Severity, StopReason,
+    ToolCallRecord, TriageSummary,
 )
 
 # 2: adds the optional triage.summary record (DD-023). Records of other types
@@ -37,6 +44,8 @@ from .schemas import (
 AUDIT_SCHEMA_VERSION = 2
 AGENT_NAME = "alert-triage-agent"
 MAX_AUDIT_LINE_BYTES = 8_192
+# How long an append waits for another writer's lock before giving up.
+LOCK_TIMEOUT_S = 10.0
 PROVIDERS = ("ollama", "heuristic")
 RULE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
 PROBLEM_PATTERN = r"^(?:\(root\)|[a-z_<>][a-z0-9_<>]*(?:\.[a-z0-9_<>]+)*): [a-z_]+$|^and [0-9]+ more$"
@@ -44,6 +53,22 @@ STARTED_AT_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"
 FINDING_KEYS = ("technique", "severity", "next_steps", "containment", "missing_data")
 
 _STARTED_AT_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+
+
+class AuditLockTimeout(OSError):
+    """Another writer held the audit log's lock for longer than LOCK_TIMEOUT_S."""
+
+
+class AuditLogIncomplete(OSError):
+    """The audit log does not end with a newline, so its last record is partial."""
+
+
+class AuditRollbackFailed(OSError):
+    """A failed append could not be undone; the log may end in a partial record."""
+
+
+class AuditNotDurable(OSError):
+    """The records were written and synced, but a directory sync failed."""
 
 
 def _matches(pattern: str, value: object) -> bool:
@@ -103,6 +128,22 @@ def _member(value: object, allowed: tuple) -> bool:
     return type(value) is str and value in allowed
 
 
+def _well_formed(result: object, alert: object) -> bool:
+    # The containers the projection reads, checked before any value, so a
+    # replaced one gives the fixed message instead of a TypeError or
+    # AttributeError. The values inside are checked afterwards.
+    if not isinstance(result, AgentResult) or not isinstance(alert, Alert):
+        return False
+    draft = result.draft
+    return (
+        isinstance(result.enrichment, Enrichment)
+        and isinstance(result.model_calls, list) and all(isinstance(r, ModelCallRecord) for r in result.model_calls)
+        and isinstance(result.tool_records, list) and all(isinstance(r, ToolCallRecord) for r in result.tool_records)
+        and (draft is None or (isinstance(draft, ModelDraft) and isinstance(draft.severity, DraftSeverity)
+                               and (draft.technique is None or isinstance(draft.technique, DraftTechnique))))
+    )
+
+
 def _run_values_in_schema(result: AgentResult, alert: Alert) -> bool:
     # Every run-level value the projection writes, or whose length it writes.
     # The allowed sets come from the schema, so they cannot drift from it.
@@ -159,6 +200,8 @@ def audit_records(result: AgentResult, alert: Alert, *, summary: TriageSummary |
     decision as codes and counts. The summary must belong to the run.
     """
     # Fixed messages: the values come from the caller and are not echoed.
+    if not _well_formed(result, alert):
+        raise ValueError("the run result is not well-formed")
     if alert.alert_id != result.alert_id:
         raise ValueError("alert does not match the run")
     if not _matches(RUN_ID_PATTERN, result.run_id):
@@ -339,11 +382,15 @@ def write_audit_log(result: AgentResult, alert: Alert, path: str | os.PathLike, 
                     summary: TriageSummary | None = None) -> int:
     """Append the run's audit records to path, and the summary record if summary is given.
 
-    Returns the number of lines written.
+    Returns the number of lines written. On return, the records, the file's
+    entry in its directory and the directory's entry in its parent are synced
+    to disk, whichever writer created them. A failed append is rolled back to
+    the file's previous size.
 
-    One writer per file is assumed. Only the file and its parent directory are
-    checked, and the log is not tamper-evident: production use needs an
-    append-only store.
+    Writers that use this function exclude each other with an exclusive lock.
+    Only the file and its parent directory are checked, the directory's
+    ancestors are trusted, and the log is not tamper-evident: production use
+    needs an append-only store.
     """
     # Everything is built and serialized first, so any error raises before
     # the file system is touched.
@@ -351,33 +398,63 @@ def write_audit_log(result: AgentResult, alert: Alert, path: str | os.PathLike, 
     data = "".join(lines).encode("ascii")
     if not hasattr(os, "O_NOFOLLOW"):
         raise OSError("audit log needs O_NOFOLLOW, which this platform lacks")
-    path = os.fspath(path)
-    parent = os.path.dirname(path) or "."
+    if fcntl is None or not files.supported():
+        raise OSError("audit log needs O_DIRECTORY, dir_fd and file locking, which this platform lacks")
+    parent, name = os.path.split(os.fspath(path))
     try:
-        st = os.lstat(parent)
-    except FileNotFoundError:
-        os.mkdir(parent, 0o700)   # never the grandparents: a missing one raises
-    else:
-        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o022:
-            raise PermissionError("audit log directory must be ours, a real directory, not group or other writable")
-    # No symlink is followed, and a FIFO without a reader fails to open
-    # instead of hanging.
-    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-    fd = os.open(path, flags, 0o600)
+        files.single_component(name)
+    except ValueError:
+        raise ValueError("audit log path must end in a file name") from None
+    directory = parent or "."
+    dir_fd = files.open_private_dir(directory, what="audit log", create=True)
     try:
-        # The creation mode applies only to a new file, so an existing one is
-        # checked; it is refused, never chmod-ed or chown-ed.
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
-            raise PermissionError("audit log must be our regular file with no group or other permissions")
-        view = memoryview(data)
-        # A stalled write is reported, never retried forever; bytes already
-        # written stay in the file (one writer per file is assumed).
-        while view:
-            written = os.write(fd, view)
-            if written <= 0:
-                raise OSError("audit log write made no progress")
-            view = view[written:]
+        fd = files.open_private_file(dir_fd, name, what="audit log", append=True)
+        try:
+            _lock(fd)
+            _append(fd, data)
+            # Still under the lock, so a later writer cannot report success
+            # before these entries are durable.
+            try:
+                files.sync_dir_and_parent(dir_fd, directory)
+            except OSError:
+                raise AuditNotDurable("audit records were written, but their directory entries "
+                                      "may not be durable") from None
+        finally:
+            os.close(fd)   # also releases the lock
     finally:
-        os.close(fd)
+        os.close(dir_fd)
     return len(lines)
+
+
+def _lock(fd: int) -> None:
+    deadline = time.monotonic() + LOCK_TIMEOUT_S
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise AuditLockTimeout("audit log is locked by another writer") from None
+            time.sleep(0.05)
+
+
+def _append(fd: int, data: bytes) -> None:
+    # Under the lock. A log whose last record is partial (a crash during an
+    # earlier write) is refused, not appended to: gluing a new record onto it
+    # would corrupt both. The operator repairs it by truncating it to its last
+    # newline.
+    size = os.fstat(fd).st_size
+    if size and os.pread(fd, 1, size - 1) != b"\n":
+        raise AuditLogIncomplete("audit log ends without a newline")
+    try:
+        files.write_all(fd, data, what="audit log")
+        os.fsync(fd)
+    except OSError:
+        # Undo this append, then report the original error.
+        try:
+            os.ftruncate(fd, size)
+            os.fsync(fd)
+        except OSError:
+            raise AuditRollbackFailed("audit log write failed and could not be rolled back; "
+                                      "it may end in a partial record") from None
+        raise
