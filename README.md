@@ -14,11 +14,11 @@ reported as missing data instead of being filled in.
 > **Status:** early development. The data layer, the tool gateway, the four
 > read-only tools, alert ingestion, deterministic enrichment, the agent loop,
 > the rule-based baseline backend, the output guardrails (including the
-> injection tripwire and spotlighting), the Markdown summary renderer and the
-> metadata-only audit writer are implemented and tested. An Ollama backend for
-> local models is implemented and tested against a simulated server. The
-> service and evaluation are planned; see [Roadmap](#roadmap). No evaluation
-> or model results are published yet.
+> injection tripwire and spotlighting), the Markdown summary renderer, the
+> metadata-only audit writer and the command-line runner are implemented and
+> tested. An Ollama backend for local models is implemented and tested
+> against a simulated server. The service and evaluation are planned; see
+> [Roadmap](#roadmap). No evaluation or model results are published yet.
 
 **Scope.** Lab project. All alerts, hosts and inventory data are synthetic;
 threat-intelligence data comes from public sources. It is not a production
@@ -92,8 +92,8 @@ service.
 | Model-requested lookups recorded separately from enrichment | Untraceable model-steered evidence | Implemented |
 | Model endpoint must be an `http(s)` URL without credentials, path or query; no proxy or redirect handling; TLS verified | Alert data sent somewhere unintended | Implemented |
 | Hard per-request deadline (never more than the time left in the run), bounded worker threads, 1 MiB reply cap; malformed replies are backend errors | Hung or hostile model endpoint | Implemented |
-| Markdown summary: only fixed template text is Markdown; every value is shown as code (fenced blocks and code spans that the value cannot close); control, format, surrogate and line or paragraph separator characters are shown as `<U+XXXX>`; model output is labelled; an oversized summary is rejected, never truncated. Targets CommonMark/GFM. The renderer (`triage.render.render_markdown`) is implemented and callable; calling it from the CLI and service is planned | Markdown injection in tickets, wikis and chat: remote images, links, raw HTML, forged headings, bidi reordering | Partial |
-| Metadata-only JSONL audit log of every lookup and model call (OpenTelemetry GenAI field names) and, when the caller passes it, the guardrails' summary as codes and counts: no prompts, model text, tool arguments, tool data, error messages or endpoint, and no summary text, technique name, asset host or owner; owner-only, append-only file, opened through its checked directory, locked against concurrent writers, rolled back on a failed write and synced to disk. The writer (`triage.audit.write_audit_log`) is implemented and callable; `run_agent()` does not write a log by itself, and calling it for every run from the CLI and service is planned | Lack of accountability; sensitive data in logs | Partial |
+| Markdown summary: only fixed template text is Markdown; every value is shown as code (fenced blocks and code spans that the value cannot close); control, format, surrogate and line or paragraph separator characters are shown as `<U+XXXX>`; model output is labelled; an oversized summary is rejected, never truncated. Targets CommonMark/GFM. The CLI renders every `--out` summary with it (`triage.render.render_markdown`); the service is planned | Markdown injection in tickets, wikis and chat: remote images, links, raw HTML, forged headings, bidi reordering | Implemented |
+| Metadata-only JSONL audit log of every lookup and model call (OpenTelemetry GenAI field names) and, when the caller passes it, the guardrails' summary as codes and counts: no prompts, model text, tool arguments, tool data, error messages or endpoint, and no summary text, technique name, asset host or owner; owner-only, append-only file, opened through its checked directory, locked against concurrent writers, rolled back on a failed write and synced to disk. The CLI appends to it before printing or writing anything for every run, unless `--no-audit-log` is given; `run_agent()` itself writes nothing, and the service is planned | Lack of accountability; sensitive data in logs | Implemented |
 
 A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
 10 for Agentic Applications, MITRE ATLAS) is planned in `docs/threat-model.md`.
@@ -109,8 +109,9 @@ A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
 | Agent loop | `triage/agent.py`, `triage/prompt.py` | Two phases (investigation with capped tool calls, then a schema-constrained draft); byte budgets; fixed stop reasons |
 | Model backends | `triage/backends/` | One `chat()` interface; rule-based baseline; Ollama over `http.client` with hard deadlines (no model results published yet) |
 | Output guardrails | `triage/guardrails.py`, `triage/tripwire.py` | Build the `TriageSummary`: severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, injection tripwire, fail-closed statuses |
-| Markdown rendering | `triage/render.py` | `render_markdown(summary)`: a fixed Markdown document for CommonMark/GFM renderers, with every value shown as code; fixed-message `ValueError` for an invalid or oversized summary. Called explicitly; not yet called automatically |
-| Audit log | `triage/audit.py` | Metadata-only JSONL projection of a run, and optionally of its summary, with fixed keys; refuses unsafe files and directories. Called explicitly with a run's result; not yet called automatically |
+| Markdown rendering | `triage/render.py` | `render_markdown(summary)`: a fixed Markdown document for CommonMark/GFM renderers, with every value shown as code; fixed-message `ValueError` for an invalid or oversized summary. Called by the CLI for `--out` |
+| Audit log | `triage/audit.py`, `triage/files.py` | Metadata-only JSONL projection of a run, and optionally of its summary, with fixed keys; refuses unsafe files and directories. Called by the CLI for every run |
+| Command-line runner | `triage/cli.py` | `python -m triage` or `alert-triage`: one alert end to end; ASCII-only summary JSON on standard output, optional `--out` files, the audit log first; fixed exit codes and error messages |
 | Tool gateway | `triage/tools/registry.py` | Allow-list, argument validation, error handling, deterministic evidence IDs |
 | `attack_lookup` | `triage/tools/attack.py` | ATT&CK Enterprise v20.0; retired IDs return their replacement |
 | `kev_epss_lookup` | `triage/tools/kev_epss.py` | CISA KEV membership and FIRST EPSS score; missing EPSS reported as unknown |
@@ -144,6 +145,39 @@ pip install -e ".[dev,embeddings]"
 Configuration is read from environment variables; `.env.example` lists them
 with their defaults.
 
+## Usage
+
+```bash
+python -m triage --format wazuh samples/alerts/wazuh/encoded_powershell.json --out out
+```
+
+The summary is printed as one line of ASCII-only JSON. With `--out`,
+`out/<run_id>.json` and `out/<run_id>.md` (the safe Markdown) are written as
+well. Every run first appends its metadata-only audit records to
+`logs/audit.jsonl`; `--audit-log FILE` chooses another file, and
+`--no-audit-log` runs without one. The backend comes from the environment
+(`.env.example`); the default is the rule-based baseline. Without the
+`embeddings` extra, set `TRIAGE_EMBEDDER=hashing`. The same command is
+installed as `alert-triage`.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | A summary was produced; its `status` says whether triage completed |
+| 1 | Internal error |
+| 2 | Invalid arguments or configuration |
+| 3 | The alert input was rejected |
+| 4 | The audit log could not be used; nothing was printed or written |
+| 5 | The output files or standard output could not be written |
+| 130 | Interrupted; output files this run had created are removed |
+
+Error messages are fixed text and never contain alert content, model output,
+paths or the model endpoint. A failed or interrupted run removes the output
+files it created; a crash, `kill -9` or power loss while writing can still
+leave a partial file. The audit log and `--out` need a POSIX system
+(tested on Linux); elsewhere, use `--no-audit-log` without `--out`. Keep both
+in a directory tree only you can change: the CLI checks the directory itself
+and the files, not the directories above it.
+
 ## Testing
 
 ```bash
@@ -175,9 +209,9 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Data and tools | Schemas, versioned snapshots, four read-only tools, tool gateway | Implemented |
 | Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
-| Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. The metadata-only audit writer is implemented and callable, but not yet called automatically. Claude API (optional) and writing the audit log for every run from the CLI and service are planned | Partial |
-| Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Output guardrails (severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, fail-closed summary statuses) are implemented. The injection tripwire and spotlighting are implemented. The Markdown summary renderer is implemented and callable, but not yet called automatically | Partial |
-| Service and packaging | FastAPI `POST /triage`, CLI, Docker, GitHub Actions CI with security scanning | Planned |
+| Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. The metadata-only audit writer is implemented, and the CLI writes the audit log for every run. Claude API (optional) and the service are planned | Partial |
+| Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Output guardrails (severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, fail-closed summary statuses) are implemented. The injection tripwire and spotlighting are implemented. The Markdown summary renderer is implemented and used by the CLI | Partial |
+| Service and packaging | The CLI (`python -m triage`, `alert-triage`) is implemented. FastAPI `POST /triage`, Docker and GitHub Actions CI with security scanning are planned | Partial |
 | Evaluation and threat model | Labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, published results | Planned |
 
 ## Limitations

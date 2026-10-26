@@ -15,6 +15,9 @@ embeddings = ["sentence-transformers>=3.0"]
 # PyYAML is only used by scripts/build_sample_alerts.py and its drift test; triage never parses YAML.
 dev = ["pytest>=8.0", "pyyaml>=6.0"]
 
+[project.scripts]
+alert-triage = "triage.cli:main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
