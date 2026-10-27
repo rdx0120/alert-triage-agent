@@ -1,5 +1,7 @@
 # alert-triage-agent
 
+[![ci](https://github.com/rdx0120/alert-triage-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/rdx0120/alert-triage-agent/actions/workflows/ci.yml)
+
 A read-only LLM agent that turns a security alert into a structured
 investigation summary: likely MITRE ATT&CK technique, severity, the evidence
 behind each finding, next investigative steps, and an explicit list of what
@@ -195,6 +197,19 @@ the host that serves the model, against `http://localhost:11434`
 `python -m pytest` runs the tests with the interpreter the project is
 installed in, which avoids picking up a different `pytest` on `PATH`.
 
+CI (`.github/workflows/ci.yml`) runs the offline suite, the sample check, the
+tests with `fcntl` hidden and a console-script smoke run on Python 3.11, 3.12
+and 3.13 for every pull request and every push to `main` (DD-025). It
+installs only the hash-pinned `requirements/ci.lock`, uses no secrets and a
+read-only token, and never runs the slow or Ollama tests. After changing
+dependencies in `pyproject.toml`, regenerate the lock with
+[uv](https://docs.astral.sh/uv/), a tool used only for this step, not a
+project dependency:
+
+```bash
+uv pip compile pyproject.toml requirements/build.in --extra dev --generate-hashes --universal --python-version 3.11 -o requirements/ci.lock
+```
+
 Refresh the threat-intelligence snapshots:
 
 ```bash
@@ -211,7 +226,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
 | Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. The metadata-only audit writer is implemented, and the CLI writes the audit log for every run. Claude API (optional) and the service are planned | Partial |
 | Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Output guardrails (severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, fail-closed summary statuses) are implemented. The injection tripwire and spotlighting are implemented. The Markdown summary renderer is implemented and used by the CLI | Partial |
-| Service and packaging | The CLI (`python -m triage`, `alert-triage`) is implemented. FastAPI `POST /triage`, Docker and GitHub Actions CI with security scanning are planned | Partial |
+| Service and packaging | The CLI (`python -m triage`, `alert-triage`) and GitHub Actions CI for the offline suite are implemented. FastAPI `POST /triage`, Docker and security scanning are planned | Partial |
 | Evaluation and threat model | Labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, published results | Planned |
 
 ## Limitations
