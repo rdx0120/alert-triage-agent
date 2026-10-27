@@ -22,6 +22,11 @@ class Settings:
     # "minilm" = sentence-transformers all-MiniLM-L6-v2 (real retrieval)
     # "hashing" = offline bag-of-words hashing (tests/CI, no model download)
     embedder: str = field(default_factory=lambda: os.environ.get("TRIAGE_EMBEDDER", "minilm"))
+    # Where scripts/fetch_embedding_model.py installs the pinned model. Loaded only
+    # from here, after it matches data/embedding_model.json (DD-027).
+    embedding_model_dir: Path = field(
+        default_factory=lambda: _path("TRIAGE_EMBEDDING_MODEL_DIR", REPO_ROOT / "models" / "all-MiniLM-L6-v2")
+    )
     # "heuristic" = the rule-based baseline; "ollama" = a local model over HTTP
     backend: str = field(default_factory=lambda: os.environ.get("TRIAGE_BACKEND", "heuristic"))
     ollama_host: str = field(default_factory=lambda: os.environ.get("OLLAMA_HOST", "http://localhost:11434"))

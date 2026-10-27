@@ -93,6 +93,7 @@ service.
 | Model-call, tool-call and time limits; prompts bounded in bytes so they fit the context window, with output space reserved; investigation turns limited to 384 output tokens | Unbounded consumption; silent context truncation | Implemented |
 | Model-requested lookups recorded separately from enrichment | Untraceable model-steered evidence | Implemented |
 | Model endpoint must be an `http(s)` URL without credentials, path or query; no proxy or redirect handling; TLS verified | Alert data sent somewhere unintended | Implemented |
+| Embedding model pinned to one upstream revision and loaded only from a local directory that matches `data/embedding_model.json` byte for byte: ten files, safetensors weights only, no remote code, offline mode enforced; only `scripts/fetch_embedding_model.py` contacts the Hugging Face Hub, when the operator runs it | Model supply chain; network access at triage time | Implemented |
 | Hard per-request deadline (never more than the time left in the run), bounded worker threads, 1 MiB reply cap; malformed replies are backend errors | Hung or hostile model endpoint | Implemented |
 | Markdown summary: only fixed template text is Markdown; every value is shown as code (fenced blocks and code spans that the value cannot close); control, format, surrogate and line or paragraph separator characters are shown as `<U+XXXX>`; model output is labelled; an oversized summary is rejected, never truncated. Targets CommonMark/GFM. The CLI renders every `--out` summary with it (`triage.render.render_markdown`); the service is planned | Markdown injection in tickets, wikis and chat: remote images, links, raw HTML, forged headings, bidi reordering | Implemented |
 | Metadata-only JSONL audit log of every lookup and model call (OpenTelemetry GenAI field names) and, when the caller passes it, the guardrails' summary as codes and counts: no prompts, model text, tool arguments, tool data, error messages or endpoint, and no summary text, technique name, asset host or owner; owner-only, append-only file, opened through its checked directory, locked against concurrent writers, rolled back on a failed write and synced to disk. The CLI appends to it before printing or writing anything for every run, unless `--no-audit-log` is given; `run_agent()` itself writes nothing, and the service is planned | Lack of accountability; sensitive data in logs | Implemented |
@@ -106,13 +107,13 @@ risk, and each control is marked as backed by tests, by committed
 configuration or only by written policy. `tests/test_threat_model.py`
 checks the document's structure, that every cited test and path exists and
 that every framework identifier is a known one; it does not check that a
-control works. Four threats are open: the KEV snapshot is built from a
-moving upstream source without hash verification (T18); with the default
-embedder, runbook search can fetch the embedding model from the Hugging
-Face Hub at triage time (T20); the developer install is not hash-pinned
-(T27); and nothing scans commits for secrets or real data (T30). Accepted
-risks are accepted at laboratory level only, not as a production risk
-acceptance.
+control works. Three threats are open: the KEV snapshot is built from a
+moving upstream source without hash verification (T18); the developer
+install is not hash-pinned (T27); and nothing scans commits for secrets or
+real data (T30). The embedding model is pinned and loaded offline (T20,
+Partial: the real libraries are checked by a manual slow test, not in CI).
+Accepted risks are accepted at laboratory level only, not as a production
+risk acceptance.
 
 ## Components
 
@@ -132,7 +133,7 @@ acceptance.
 | `attack_lookup` | `triage/tools/attack.py` | ATT&CK Enterprise v20.0; retired IDs return their replacement |
 | `kev_epss_lookup` | `triage/tools/kev_epss.py` | CISA KEV membership and FIRST EPSS score; missing EPSS reported as unknown |
 | `asset_context` | `triage/tools/assets.py` | Synthetic 10-host inventory; unknown hosts reported as not found |
-| `runbook_search` | `triage/tools/runbooks.py` | Section-level chunks, all-MiniLM-L6-v2 embeddings, FAISS exact search |
+| `runbook_search` | `triage/tools/runbooks.py`, `triage/embedding_model.py` | Section-level chunks, all-MiniLM-L6-v2 embeddings from a pinned, verified local copy, FAISS exact search |
 | Data builders | `scripts/` | Rebuild the ATT&CK and KEV/EPSS snapshots from public sources |
 
 Design rationale for each choice is recorded in
@@ -158,6 +159,19 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[dev,embeddings]"
 ```
 
+With the `embeddings` extra, acquire the embedding model once. This is the
+only step that contacts the Hugging Face Hub: it downloads the ten files of
+the revision pinned in `data/embedding_model.json` (about 91 MB), checks each
+file's size and SHA-256, and installs them in `models/all-MiniLM-L6-v2/`
+(or `TRIAGE_EMBEDDING_MODEL_DIR`). It uses no Hugging Face account or token.
+
+```bash
+python scripts/fetch_embedding_model.py
+```
+
+Triage then loads the model only from that directory, offline, and only if
+it still matches the manifest exactly (DD-027).
+
 Configuration is read from environment variables; `.env.example` lists them
 with their defaults.
 
@@ -172,9 +186,11 @@ The summary is printed as one line of ASCII-only JSON. With `--out`,
 well. Every run first appends its metadata-only audit records to
 `logs/audit.jsonl`; `--audit-log FILE` chooses another file, and
 `--no-audit-log` runs without one. The backend comes from the environment
-(`.env.example`); the default is the rule-based baseline. Without the
-`embeddings` extra, set `TRIAGE_EMBEDDER=hashing`. The same command is
-installed as `alert-triage`.
+(`.env.example`); the default is the rule-based baseline. The default
+embedder needs the acquired model (Installation); if the model is missing or
+does not match its manifest, the CLI stops with exit code 2 before reading
+the alert. Without the `embeddings` extra, set `TRIAGE_EMBEDDER=hashing`.
+The same command is installed as `alert-triage`.
 
 | Exit code | Meaning |
 |---|---|
@@ -198,7 +214,7 @@ and the files, not the directories above it.
 
 ```bash
 python -m pytest              # offline suite; uses a deterministic hashing embedder
-python -m pytest -m slow      # retrieval tests with the real embedding model (~90 MB download)
+python -m pytest -m slow      # real embedding model, offline; needs the extra and the acquired model
 python -m pytest -m ollama -s # live smoke test; needs OLLAMA_MODEL (and OLLAMA_HOST if not local)
 ```
 
