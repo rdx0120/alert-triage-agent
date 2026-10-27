@@ -1,0 +1,4 @@
+# The build backend, pinned in requirements/ci.lock with the dev extra, so that
+# CI installs the project with --no-build-isolation and downloads nothing
+# unpinned. See the README (Testing) for how to regenerate the lock.
+setuptools>=68

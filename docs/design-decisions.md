@@ -720,3 +720,37 @@ not checked. The cleanup handles exceptions and interrupts, not crashes: a
 Windows can run the CLI only without an audit log and without `--out`; input
 files are opened there without the POSIX-only flags, with the same
 regular-file check and size limit.
+
+---
+
+## DD-025: CI runs the offline suite read-only, from a hash-pinned lock
+
+**Context.** Every change was tested by hand before review, on one machine
+and one Python version. CI runs code from pull requests, which makes it an
+attack surface of its own: workflows triggered with write access or secrets
+next to untrusted code, unpinned third-party actions, poisoned caches and
+expressions that inject text into shell steps are the usual ways in.
+
+**Decision.** One GitHub Actions workflow runs on pushes to `main` and on
+pull requests to `main`, never on `pull_request_target` or `workflow_run`.
+One job, on `ubuntu-24.04` with Python 3.11, 3.12 and 3.13, installs the
+hash-pinned `requirements/ci.lock` with `pip --require-hashes --no-deps`
+(the build backend included, so the editable install uses no build
+isolation and downloads nothing unpinned), runs `pip check`, the offline
+suite, the sample check, the tests with `fcntl` hidden and a console-script
+smoke run. The token can only read the repository; no secret is used; the
+checkout keeps no credentials; only `actions/checkout` and
+`actions/setup-python` are used, each pinned to a full commit SHA of a
+release at least 14 days old; no user-controlled expression appears in a
+shell step; nothing is cached or uploaded; a step fails the job if any
+`OLLAMA_*` variable is set. The lock is generated with `uv pip compile` on
+a developer machine; uv is a tool, not a project dependency.
+
+**Consequences.** A pull request from a fork can change the workflow it
+runs, but only with a read-only token and no secrets. Dependency versions
+change only through a reviewed change to the lock. The slow, Ollama and
+model-dependent paths are not covered by CI, nor is Windows. Branch
+protection and the repository's Actions settings are configured by the
+owner outside the repository; the required checks are added only after
+the workflow has reported them. Security scanning is planned with the
+service.

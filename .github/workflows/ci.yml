@@ -1,0 +1,82 @@
+# Continuous integration for the offline suite (DD-025).
+#
+# Read-only by design: the token can only read the repository, no secret is
+# used, nothing is cached or uploaded, and no step contacts a model server.
+# Runs on pull_request, never pull_request_target, so a pull request from a
+# fork runs with a read-only token and no secrets.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push to a pull request replaces its older run; runs on main always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Refuse model-server settings
+        # The Ollama tests are deselected by pyproject.toml; this keeps a later
+        # edit from pointing CI at a model server.
+        run: |
+          if env | grep -q '^OLLAMA_'; then
+            echo "an OLLAMA_ variable is set; CI never contacts a model server" >&2
+            exit 1
+          fi
+
+      - name: Install the pinned dependencies
+        # Every package, the build backend included, is pinned by version and hash.
+        run: python -m pip install --require-hashes --no-deps -r requirements/ci.lock
+
+      - name: Install the project
+        # No build isolation, so nothing unpinned is downloaded; editable, as in
+        # the README, so data/ and the runbooks are found in the checkout.
+        run: python -m pip install --no-deps --no-build-isolation -e .
+
+      - name: Check the installed dependencies
+        run: python -m pip check
+
+      - name: Offline test suite
+        run: python -m pytest
+
+      - name: Sample artifacts
+        run: python scripts/build_sample_alerts.py --check
+
+      - name: Tests without fcntl
+        # The POSIX-only tests must skip cleanly where fcntl is missing.
+        run: >-
+          python -c "import sys; sys.modules['fcntl'] = None; import pytest;
+          sys.exit(pytest.main(['-q', '-p', 'no:cacheprovider', 'tests/test_cli.py', 'tests/test_audit_files.py']))"
+
+      - name: Console script
+        env:
+          TRIAGE_EMBEDDER: hashing
+        run: alert-triage --format wazuh samples/alerts/wazuh/encoded_powershell.json --no-audit-log > /dev/null
