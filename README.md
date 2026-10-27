@@ -97,8 +97,22 @@ service.
 | Markdown summary: only fixed template text is Markdown; every value is shown as code (fenced blocks and code spans that the value cannot close); control, format, surrogate and line or paragraph separator characters are shown as `<U+XXXX>`; model output is labelled; an oversized summary is rejected, never truncated. Targets CommonMark/GFM. The CLI renders every `--out` summary with it (`triage.render.render_markdown`); the service is planned | Markdown injection in tickets, wikis and chat: remote images, links, raw HTML, forged headings, bidi reordering | Implemented |
 | Metadata-only JSONL audit log of every lookup and model call (OpenTelemetry GenAI field names) and, when the caller passes it, the guardrails' summary as codes and counts: no prompts, model text, tool arguments, tool data, error messages or endpoint, and no summary text, technique name, asset host or owner; owner-only, append-only file, opened through its checked directory, locked against concurrent writers, rolled back on a failed write and synced to disk. The CLI appends to it before printing or writing anything for every run, unless `--no-audit-log` is given; `run_agent()` itself writes nothing, and the service is planned | Lack of accountability; sensitive data in logs | Implemented |
 
-A full threat model (STRIDE, OWASP Top 10 for LLM Applications 2025, OWASP Top
-10 for Agentic Applications, MITRE ATLAS) is planned in `docs/threat-model.md`.
+The threat model is in [`docs/threat-model.md`](docs/threat-model.md). It
+classifies the threats found along the data flow and its seven trust
+boundaries with STRIDE, and maps them to the OWASP Top 10 for LLM
+Applications 2026, the OWASP Top 10 for Agentic Applications 2026 and MITRE
+ATLAS 2026.09. Each threat has one status, its controls and its residual
+risk, and each control is marked as backed by tests, by committed
+configuration or only by written policy. `tests/test_threat_model.py`
+checks the document's structure, that every cited test and path exists and
+that every framework identifier is a known one; it does not check that a
+control works. Four threats are open: the KEV snapshot is built from a
+moving upstream source without hash verification (T18); with the default
+embedder, runbook search can fetch the embedding model from the Hugging
+Face Hub at triage time (T20); the developer install is not hash-pinned
+(T27); and nothing scans commits for secrets or real data (T30). Accepted
+risks are accepted at laboratory level only, not as a production risk
+acceptance.
 
 ## Components
 
@@ -227,7 +241,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. The metadata-only audit writer is implemented, and the CLI writes the audit log for every run. Claude API (optional) and the service are planned | Partial |
 | Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Output guardrails (severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, fail-closed summary statuses) are implemented. The injection tripwire and spotlighting are implemented. The Markdown summary renderer is implemented and used by the CLI | Partial |
 | Service and packaging | The CLI (`python -m triage`, `alert-triage`) and GitHub Actions CI for the offline suite are implemented. FastAPI `POST /triage`, Docker and security scanning are planned | Partial |
-| Evaluation and threat model | Labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, published results | Planned |
+| Evaluation and threat model | The threat model (`docs/threat-model.md`) is implemented. A labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, and published results are planned | Partial |
 
 ## Limitations
 

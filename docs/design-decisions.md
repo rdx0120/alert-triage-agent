@@ -754,3 +754,45 @@ protection and the repository's Actions settings are configured by the
 owner outside the repository; the required checks are added only after
 the workflow has reported them. Security scanning is planned with the
 service.
+
+---
+
+## DD-026: The threat model cites its evidence, and a test checks the citations
+
+**Context.** The README lists the security controls but not the threats
+behind them, what each control leaves uncovered, or what is accepted. A
+threat model that cites tests and files drifts as the code changes, and a
+status such as "mitigated" means little unless it is tied to evidence. The
+frameworks it maps to also change: the 2026 OWASP LLM list renumbers most
+2025 entries.
+
+**Decision.** `docs/threat-model.md` identifies threats by following the
+data flow across seven trust boundaries, one of them the current run-time
+fetch of the embedding model, and classifies each threat with STRIDE. The
+classification is threat-driven, not an exhaustive matrix of every element
+and category. Each threat has exactly one status from a fixed set, and each
+control one evidence class: `[test]`, `[config]` or `[policy]`. Only tested
+controls support a Mitigated or Partial status. An Accepted risk is one
+judged acceptable for the synthetic laboratory scope only, and the
+document states the kind of each acceptance, so that a missing test is
+not read as an accepted vulnerability. Framework entries are mapped only where they fit directly, with the edition
+in each identifier (OWASP LLM 2026, OWASP Agentic 2026, MITRE ATLAS
+2026.09). There are no numeric risk scores. `tests/test_threat_model.py`
+checks, with the standard library, that threat IDs are in order, statuses
+and evidence classes are from the fixed sets and follow the status rules,
+every cited test is defined where cited, every cited path exists, every
+framework identifier is a known one, and the document is ASCII.
+
+**Consequences.** Renaming or removing a cited test or file fails the suite
+until the document is updated. The test checks references and structure,
+not whether a control works: whether a cited test proves its claim remains
+a review question. The threat model records findings and does not fix
+them. Four threats are open: T18, the unpinned and unverified KEV
+source; T20, the embedding model fetched at triage time, which has its
+own milestone; T27, the unpinned developer install; and T30, committed
+secrets or real data, until scanning is in place. Accepted risks are
+accepted at laboratory level only, not as a formal or production risk
+acceptance, and are reviewed again before real data, a real inventory or
+the service. Moving to a newer framework
+edition is a deliberate change to the document and the test's lists.
+Planned components are modelled when they are designed.
