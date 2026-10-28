@@ -93,7 +93,7 @@ are tested.
 | E4 | Downstream consumer: analyst, ticket, wiki, chat | External | - |
 | E5 | Public sources: MITRE ATT&CK, CISA KEV, FIRST EPSS, sigma-detection-pack, PyPI | External, build time | `scripts/` |
 | E6 | Contributors and CI: pull requests, AI coding agents, GitHub Actions | External, development time | `.github/workflows/ci.yml` |
-| E7 | Hugging Face Hub | External; reached at run time today (T20) | - |
+| E7 | Hugging Face Hub | External; reached only by the operator's acquisition step (T20) | `scripts/fetch_embedding_model.py` |
 | P1 | Command-line runner | Process | `triage/cli.py` |
 | P2 | Ingestion and normalization | Process | `triage/ingest.py`, `triage/schemas.py` |
 | P3 | Deterministic enrichment | Process | `triage/enrich.py`, `triage/evidence.py` |
@@ -107,7 +107,7 @@ are tested.
 | D2 | Runbooks and rule fixtures | Data store | `vendor/sigma-detection-pack/` |
 | D3 | Audit log | Data store | `logs/audit.jsonl` by default |
 | D4 | Output files from `--out` | Data store | `<run_id>.json`, `<run_id>.md` |
-| D5 | Embedding model cache | Data store, outside the repository | Hugging Face cache |
+| D5 | Embedding model directory, checked against `data/embedding_model.json` | Data store, outside git | `models/all-MiniLM-L6-v2/` by default |
 | D6 | Dependency lock and installed environment | Data store | `requirements/ci.lock` |
 
 ### Data flow
@@ -122,9 +122,9 @@ TB2 model server                                            (P4 agent loop)
                                                              v         |
                     (P5 gateway + four tools) <-- lookups from P3, P4  |
                       |             |              |                   |
-                [D1 data]    [D2 runbooks]   [D5 model cache]          |
+                [D1 data]    [D2 runbooks]   [D5 model dir]            |
                                                    :                   |
-TB7 (current, not intended)                        :....> [E7 HF Hub]  |
+TB7 (operator acquisition only)                    :<.... [E7 HF Hub]  |
                                                                        v
                                          (P7 guardrails) --> (P8 renderer)
 TB3 output                                                     |
@@ -147,22 +147,20 @@ Build and development time:
 | TB4 | Local filesystem | Audit and output files; other local users | The checked directory and file are trusted only after checks |
 | TB5 | Build-time supply chain | Public data, rules, runbooks and packages into D1, D2 and D6 | Trusted after review, by pinned version or hash |
 | TB6 | Development and CI | Code and workflow changes into the repository | Trusted after review and CI |
-| TB7 | Run-time model acquisition | Embedding model files from E7 into D5 | Current behaviour; see below |
+| TB7 | Model acquisition | Embedding model files from E7 into D5, by the operator's acquisition step only | Trusted only after every file matches the committed manifest |
 
-**TB7, intended and current behaviour.** The intended design is that no
-network connection is made at triage time except to the configured model
-server (`CLAUDE.md` rule 3, DD-001), with the embedding model acquired
-beforehand and loaded from local files. The current code does not do this.
-With the default `TRIAGE_EMBEDDER=minilm`, `runbook_search` builds its index
-on the first call in a process, and enrichment makes that call before the
-model runs. Building the index loads `sentence-transformers/all-MiniLM-L6-v2`
-by name through the sentence-transformers library, with no pinned revision
-and no local-only flag. The library can then contact the Hugging Face Hub to
-download the model or to check a cached copy. This is threat T20 (Open). The
-crossing carries model files inward; the alert text is embedded locally and
-is not part of these requests. No test shows what the library sends, and no
-exfiltration has been observed or is claimed. With `TRIAGE_EMBEDDER=hashing`,
-used by the tests and CI, nothing crosses TB7.
+**TB7, the embedding model.** The operator acquires the model once with
+`scripts/fetch_embedding_model.py`, the only code in this project that
+contacts the Hugging Face Hub. It downloads exactly the ten files listed in
+`data/embedding_model.json` at the pinned revision, without a token, checks
+each file's size and SHA-256, and installs them as plain files in a local
+directory (D5). The Hub can redirect a download to its CDN or Xet storage
+hosts; the recorded hashes, not the hosts, are what make the bytes
+trustworthy. At triage time nothing crosses TB7: the model is loaded only
+from that directory, by its absolute path, after it matches the manifest
+exactly, with offline mode enforced and without pickle weights or remote
+code (T20, DD-027). With `TRIAGE_EMBEDDER=hashing`, used by the offline
+tests and CI, no model is loaded at all.
 
 ## Threat register
 
@@ -337,7 +335,8 @@ used by the tests and CI, nothing crosses TB7.
   - [test] Model-call, tool-call, per-turn and investigation-turn caps that callers cannot raise: `tests/test_agent.py::test_total_tool_call_cap`, `tests/test_agent.py::test_per_turn_cap_drops_extra_calls`, `tests/test_agent.py::test_investigation_turn_cap`, `tests/test_agent.py::test_limits_cannot_be_raised`
   - [test] A run deadline that every request respects: `tests/test_agent.py::test_deadline_stops_before_next_call`, `tests/test_agent.py::test_request_timeout_within_run`, `tests/test_agent.py::test_runtime_budget_backstop`
 - Residual: enrichment counts against the run deadline but is not
-  interrupted by it; today the only slow enrichment step is T20.
+  interrupted by it; the slowest enrichment step is verifying and loading
+  the local embedding model (T20), which makes no network request.
 
 ### T13 Silent context truncation
 
@@ -445,31 +444,31 @@ used by the tests and CI, nothing crosses TB7.
   calibrated. `tests/test_runbooks_minilm.py::test_semantic_match` is a slow
   test, not run in CI.
 
-### T20 Embedding model fetched at triage time, unpinned
+### T20 Unpinned or remote embedding model at triage time
 
-- Status: Open
+- Status: Partial
 - Boundary: TB7. Elements: P5, D5, E7. STRIDE: Tampering, Denial of service, Information disclosure.
 - Frameworks: LLM04:2026; Agentic 2026: ASI04; ATLAS 2026.09: AML.T0010.003, AML.T0011.000
-- Threat: with the default embedder, the first `runbook_search` in a process
-  loads `sentence-transformers/all-MiniLM-L6-v2` by name, without a pinned
-  revision or local-only loading (see TB7).
-  - Supply chain: the model files used can change upstream without any
-    change to this repository, and loading them runs library code on
-    downloaded files.
-  - Availability: when the Hub is slow or unreachable, enrichment waits for
-    the library's own timeouts, which the run deadline does not interrupt; a
-    failure becomes an error result, the enrichment is degraded and the
-    summary reports insufficient data (fail closed, T17).
-  - Disclosure: the requests reveal to the Hub that this host uses the
-    model. The alert text is embedded locally and is not part of these
-    requests by the way the library is called; no test covers what the
-    library sends.
+- Threat: the runbook index loads a model other than the reviewed one,
+  fetches one from the Hub at triage time, or loads pickle weights or remote
+  code. A changed model alters what guidance the model is shown; a fetch at
+  triage time adds a network dependency and reveals use of the model; pickle
+  weights or remote code would run code from the download.
 - Controls:
-  - [config] The offline suite's settings, the CLI tests and the CI console-script step select the hashing embedder, so nothing crosses TB7 in the offline suite or CI; the slow and live tests are deselected by default: `tests/conftest.py`, `tests/test_cli.py`, `.github/workflows/ci.yml`, `pyproject.toml`
-- Residual: open. Planned fix, milestone N1: pin the model revision, load
-  only local files at triage time, acquire the model in an explicit step,
-  and add a test that fails on an unexpected outbound connection during a
-  run.
+  - [test] The model is pinned in a committed manifest (repository, revision, license, ten files with size and SHA-256, safetensors weights only), read strictly: `tests/test_embedding_model.py::test_manifest_pins_the_safetensors_model`, `tests/test_embedding_model.py::test_malformed_manifest_is_refused`
+  - [test] The local directory must match the manifest exactly, with no extra, hidden, linked or cache files, and an unverified directory never reaches the library: `tests/test_embedding_model.py::test_unexpected_contents_are_refused`, `tests/test_embedding_model.py::test_unverified_directory_is_never_loaded`
+  - [test] Loading is local and offline: an absolute path, `local_files_only`, no remote code, safetensors only, offline mode set before the first import and checked after it: `tests/test_embedding_model.py::test_loader_passes_only_local_offline_arguments`, `tests/test_embedding_model.py::test_relative_setting_reaches_the_library_as_an_absolute_path`, `tests/test_embedding_model.py::test_offline_mode_is_set_before_import`, `tests/test_embedding_model.py::test_library_imported_without_offline_mode_is_refused`
+  - [test] A full CLI run with the default embedder makes no outbound connection, and a missing or altered model stops the CLI with exit code 2 or fails closed in the tool: `tests/test_embedding_model.py::test_no_connection_during_a_minilm_run`, `tests/test_embedding_model.py::test_network_guard_catches_a_connection`, `tests/test_embedding_model.py::test_cli_refuses_a_missing_or_altered_model`, `tests/test_embedding_model.py::test_runbook_search_reports_an_unavailable_model_as_an_error`
+  - [test] Only the operator's acquisition script contacts the Hub; it requests only the manifest's files at the pinned revision, without credentials, and installs verified plain files or nothing: `tests/test_embedding_model.py::test_triage_never_imports_the_hub_or_its_download_functions`, `tests/test_fetch_embedding_model.py::test_downloads_are_bounded_pinned_and_tokenless`, `tests/test_fetch_embedding_model.py::test_installs_exactly_the_manifest_files_as_regular_files`, `tests/test_fetch_embedding_model.py::test_a_failure_installs_nothing`
+  - [test] With the real libraries, retrieval works offline and no connection is attempted. These are slow tests, run by hand on the floor and the latest supported dependency combinations, not in CI: `tests/test_runbooks_minilm.py::test_semantic_match`, `tests/test_runbooks_minilm.py::test_real_library_runs_in_offline_mode`
+- Residual: the tests in CI use stand-in libraries; the real libraries'
+  offline behaviour is checked only by the slow tests, by hand, and a later
+  library release could change it, so they are repeated on every dependency
+  change. The socket guard sees connections made through Python's socket
+  module only; offline mode is what covers native code. A process running as
+  the operator could replace the model between verification and load, which
+  is out of scope. The pinned model's own retrieval quality is a matter for
+  evaluation (T19).
 
 ### T21 Tool argument injection by the model
 
@@ -637,15 +636,14 @@ for an accepted vulnerability.
 | - | Platform limitation that fails closed | Windows runs without an audit log or `--out` | The CLI refuses those options there rather than write unsafely, and the README says so |
 
 Not accepted, and Open: T18 (unpinned, unverified KEV source and unverified
-reference data), T20 (embedding model fetched at triage time, until N1), T27
-(unpinned developer install) and T30 (real or sensitive data committed to the
-public repository, until scanning is in place).
+reference data), T27 (unpinned developer install) and T30 (real or sensitive
+data committed to the public repository, until scanning is in place).
 
 ## Residual risks and open findings
 
 | Item | Threat | Status | Planned handling |
 |---|---|---|---|
-| Embedding model fetched at triage time, unpinned | T20 | Open | Milestone N1 |
+| Real libraries' offline behaviour checked only by hand, in the slow tests; a library release could change it | T20 | Partial | Repeat the slow tests on every dependency change |
 | Tools' read-only behaviour established by review, not by a test | T02 | Partial | None planned yet |
 | Free text not checked against its sources | T01, T08 | Partial | Measured in the planned evaluation |
 | Tripwire evadable; injection tests non-adaptive | T01 | Partial | Evaluation set with injection cases |

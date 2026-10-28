@@ -32,6 +32,7 @@ from .agent import run_agent
 from .audit import AuditLockTimeout, AuditLogIncomplete, AuditNotDurable, AuditRollbackFailed, write_audit_log
 from .backends import make_backend
 from .config import get_settings
+from .embedding_model import ModelUnavailable, load_manifest, verify_model_dir
 from .guardrails import build_summary
 from .ingest import MAX_RAW_ALERT_BYTES, IngestError, load_alert
 from .render import render_markdown
@@ -47,6 +48,7 @@ OK, INTERNAL, USAGE, INPUT, AUDIT, OUTPUT, INTERRUPTED = 0, 1, 2, 3, 4, 5, 130
 # an errno name, an exception class name or the validated --format choice.
 E_USAGE = "invalid arguments"
 E_CONFIG = "invalid configuration"
+E_EMBEDDING_MODEL = ModelUnavailable.MESSAGE
 E_INPUT_READ = "cannot read the alert input"
 E_INPUT_TYPE = "alert input is not a regular file or standard input"
 E_INPUT_SIZE = f"alert input is larger than {MAX_RAW_ALERT_BYTES} bytes"
@@ -262,6 +264,14 @@ def run(argv: list[str], stdin: BinaryIO, stdout: BinaryIO, stderr: TextIO) -> i
         tools = build_tools(settings)
     except Exception:
         raise Failure(USAGE, E_CONFIG) from None
+    if settings.embedder == "minilm":
+        # Checked here, before the audit log, the alert or the model, so a missing
+        # or altered model is a configuration error, not a degraded summary.
+        # Loading verifies again, and never downloads (DD-027).
+        try:
+            verify_model_dir(settings.embedding_model_dir, load_manifest())
+        except ModelUnavailable:
+            raise Failure(USAGE, E_EMBEDDING_MODEL) from None
 
     if not args.no_audit_log:
         _preflight_audit(args.audit_log)

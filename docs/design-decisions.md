@@ -796,3 +796,49 @@ acceptance, and are reviewed again before real data, a real inventory or
 the service. Moving to a newer framework
 edition is a deliberate change to the document and the test's lists.
 Planned components are modelled when they are designed.
+
+---
+
+## DD-027: The embedding model is pinned, verified and loaded offline
+
+**Context.** `runbook_search` used `sentence-transformers/all-MiniLM-L6-v2`
+by name, so the first triage in a process could contact the Hugging Face Hub
+and load whatever the model repository held that day (threat T20). Reading
+the libraries showed three further facts. sentence-transformers before 3.4.1
+asks the Hub for model information on every load, whatever
+`local_files_only` says; a relative path such as `models/all-MiniLM-L6-v2`
+is a valid Hub repository ID, while an absolute path is rejected before any
+request. huggingface_hub reads its offline switch only once, when it is
+imported. And the upstream repository also holds pickle, TensorFlow, ONNX
+and OpenVINO weights and a training script, none of which the model needs.
+
+**Decision.** `data/embedding_model.json` pins the repository, the revision
+and the license, and lists exactly ten files with their sizes and SHA-256
+values, safetensors weights only. Their values were measured from the
+downloaded bytes and cross-checked against the Hub's own records: Git blob
+IDs for the nine ordinary files, LFS size and SHA-256 for the weights.
+`scripts/fetch_embedding_model.py`, run by the operator, is the only code
+that contacts the Hub. It requests only those files at that revision,
+without a token, with every Hugging Face cache redirected to a temporary
+directory, and installs them as new plain files only after each one
+matches; anything else installs nothing. At triage time
+`triage/embedding_model.py` verifies the directory against the manifest
+(exactly those files, regular, no links, no extras) and loads it by its
+absolute path with `local_files_only=True`, `trust_remote_code=False` and
+`use_safetensors=True`, after setting offline mode before the first import
+and refusing to load if the library is not in offline mode. The CLI checks
+the directory with its configuration and exits with code 2 if it is missing
+or does not match. The dependency floor stays at sentence-transformers 3.0.
+
+**Consequences.** A triage run makes no request to the Hub, and the model
+cannot change without a reviewed change to the manifest. The model is now
+an explicit installation step; without it the default embedder stops the
+CLI with a fixed message, and tests and CI keep using the hashing embedder.
+Every process hashes about 90 MB when it first loads the model. The tests in
+CI use stand-in libraries and a socket guard; the real libraries' offline
+behaviour is checked by slow tests run by hand on the floor and the latest
+dependency combinations, so T20 is Partial rather than Mitigated, and those
+tests are repeated whenever the dependencies change. The Hub may serve
+downloads from its CDN or Xet storage hosts; only the recorded hashes are
+trusted. Changing the model or its revision means measuring and reviewing a
+new manifest.

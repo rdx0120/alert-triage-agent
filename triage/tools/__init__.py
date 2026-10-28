@@ -23,6 +23,6 @@ def build_tools(settings: Settings | None = None) -> dict[str, Tool]:
         Tool("asset_context", assets.DESCRIPTION, assets.AssetArgs,
              assets.make_asset_context(s.data_dir / "assets.json")),
         Tool("runbook_search", runbooks.DESCRIPTION, runbooks.RunbookArgs,
-             runbooks.make_runbook_search(s.runbook_dir, s.embedder)),
+             runbooks.make_runbook_search(s.runbook_dir, s.embedder, s.embedding_model_dir)),
     ]
     return {t.name: t for t in tools}

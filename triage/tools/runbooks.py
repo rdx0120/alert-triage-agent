@@ -24,6 +24,7 @@ import faiss
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..embedding_model import ModelUnavailable, load_sentence_transformer
 from .registry import NotFound
 
 DESCRIPTION = (
@@ -71,16 +72,18 @@ class HashingEmbedder:
 
 
 class MiniLMEmbedder:
-    """sentence-transformers all-MiniLM-L6-v2: small (384-dim), CPU-friendly, downloads ~90 MB once."""
+    """sentence-transformers all-MiniLM-L6-v2: small (384-dim), CPU-friendly.
+
+    Loaded only from the verified local directory, offline; never downloaded
+    here (see triage/embedding_model.py and DD-027).
+    """
 
     name = "all-MiniLM-L6-v2"
     # Starting threshold; calibrate against the eval set before trusting it.
     min_score = 0.30
 
-    def __init__(self) -> None:
-        from sentence_transformers import SentenceTransformer  # optional dependency
-
-        self._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    def __init__(self, model_dir: Path) -> None:
+        self._model = load_sentence_transformer(model_dir)
 
     def embed(self, texts: list[str]) -> np.ndarray:
         vecs = self._model.encode(texts, normalize_embeddings=True, convert_to_numpy=True)
@@ -93,11 +96,13 @@ def _normalize(m: np.ndarray) -> np.ndarray:
     return m / norms
 
 
-def get_embedder(name: str) -> Embedder:
+def get_embedder(name: str, model_dir: Path | None = None) -> Embedder:
     if name == "hashing":
         return HashingEmbedder()
     if name == "minilm":
-        return MiniLMEmbedder()
+        if model_dir is None:
+            raise ModelUnavailable()
+        return MiniLMEmbedder(model_dir)
     raise ValueError(f"unknown embedder '{name}' (expected 'minilm' or 'hashing')")
 
 
@@ -150,13 +155,14 @@ class RunbookIndex:
 
 
 @lru_cache(maxsize=4)
-def get_index(runbook_dir: Path, embedder_name: str) -> RunbookIndex:
-    return RunbookIndex(runbook_dir, get_embedder(embedder_name))
+def get_index(runbook_dir: Path, embedder_name: str, model_dir: Path | None = None) -> RunbookIndex:
+    # A failed load raises and is not cached, so a later call verifies again.
+    return RunbookIndex(runbook_dir, get_embedder(embedder_name, model_dir))
 
 
-def make_runbook_search(runbook_dir: Path, embedder_name: str):
+def make_runbook_search(runbook_dir: Path, embedder_name: str, model_dir: Path | None = None):
     def runbook_search(args: RunbookArgs) -> dict:
-        idx = get_index(runbook_dir, embedder_name)
+        idx = get_index(runbook_dir, embedder_name, model_dir)
         hits = idx.search(args.query, args.top_k)
         if not hits:
             raise NotFound(f"no runbook section scored above {idx.embedder.min_score} for this query")

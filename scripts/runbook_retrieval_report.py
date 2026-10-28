@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"correct top-1: {top1}/{with_query} eligible ({top1}/{total} overall)")
     print(f"correct in top 3: {top3}/{with_query} eligible ({top3}/{total} overall)")
     print(f"distinct queries: {len(query_top1)} (correct top-1: {sum(query_top1.values())}/{len(query_top1)})")
-    print(f"embedder: {get_index(settings.runbook_dir, settings.embedder).embedder.name}")
+    print(f"embedder: {get_index(settings.runbook_dir, settings.embedder, settings.embedding_model_dir).embedder.name}")
     return 0
 
 
