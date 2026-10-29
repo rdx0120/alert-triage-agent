@@ -594,19 +594,31 @@ tests and CI, no model is loaded at all.
 
 ### T30 Real or sensitive data committed
 
-- Status: Open
+- Status: Partial
 - Boundary: TB6. Elements: E6. STRIDE: Information disclosure.
 - Frameworks: LLM02:2026
 - Threat: a real alert, host name, address, credential or personal data is
   committed to the public repository.
 - Controls:
+  - [test] Every file in the git index follows the synthetic-data rules of its path class, on raw lines and on every decoded JSON, JSONL and YAML string, every value of a repeated key included; undecodable files fail: `tests/test_synthetic_data.py::test_tracked_files_follow_the_rules_of_their_class`, `tests/test_synthetic_data.py::test_escaped_values_in_json_are_decoded_and_checked`, `tests/test_synthetic_data.py::test_an_earlier_value_of_a_repeated_key_is_still_checked`, `tests/test_synthetic_data.py::test_undecodable_structured_files_fail_closed_without_raising`
+  - [test] Every data-bearing and reference file has an exact provenance entry bound by its content SHA-256 (DD-028): `tests/test_synthetic_data.py::test_every_data_bearing_file_has_an_exact_provenance_entry`, `tests/test_synthetic_data.py::test_provenance_problems_are_reported`
+  - [test] The secret scan's argument list, environment, configuration, ignore format, expected commit count and CI job are fixed, and their fail-closed paths are tested with a fake scanner: `tests/test_secret_scan.py::test_gitleaks_args_are_exact`, `tests/test_secret_scan.py::test_scan_environment_is_exact`, `tests/test_secret_scan.py::test_repository_configuration_is_the_approved_one`, `tests/test_secret_scan.py::test_expected_commits_rows`, `tests/test_secret_scan.py::test_binary_entry_fails_closed`, `tests/test_secret_scan.py::test_secrets_job_is_read_only_and_full_depth`
+  - [config] The `secrets` CI job scans every reachable commit, merges included, with gitleaks v8.30.1 verified by SHA-256, after synthetic controls C1 to C14 prove detection, history and merge coverage and that no suppression applies; its commit count must equal one computed independently from git (DD-028): `.github/workflows/ci.yml`, `scripts/secret_scan.py`
   - [policy] Synthetic or public data only, and never secrets, `.env` or `logs/` (`CLAUDE.md`, hard rule 1 and Conventions).
+  - [policy] GitHub secret scanning and push protection are enabled for the repository; they are settings managed by the owner outside the repository.
   - [config] `.gitignore` excludes `.env` and `logs/`: `.gitignore`
-- Residual: open. Nothing scans commits for secrets or real data, so rule 1
-  and review are the only safeguards. Committing real or sensitive data to a
-  public repository is not accepted as a residual risk; this stays open until
-  scanning is in place, which is planned before the labeled evaluation
-  dataset is created.
+- Residual: real personal data in free text, in names or in forms no rule
+  covers is not detected: pattern rules cannot prove that data is synthetic.
+  History is checked for secrets only; real-data forms are checked in the
+  current tree, so personal data committed and later deleted would not be
+  found. Secrets in formats no rule knows, in file types the scanner's
+  default allow-list skips, or in non-archive binaries are not detected. A
+  provenance declaration is true only as far as review makes it. A secret
+  already published stays exposed in clones and forks; rotation is the
+  remedy. The gate lives in one workflow, so a change that weakens both the
+  workflow and its tests is caught only by review (as for T28), and the
+  GitHub-side settings can change outside the repository. Developer
+  machines are not covered.
 
 ## Not applicable
 
@@ -639,8 +651,8 @@ for an accepted vulnerability.
 | - | Platform limitation that fails closed | Windows runs without an audit log or `--out` | The CLI refuses those options there rather than write unsafely, and the README says so |
 
 Not accepted, and Open: T18 (unpinned, unverified KEV source and unverified
-reference data), T27 (unpinned developer install) and T30 (real or sensitive
-data committed to the public repository, until scanning is in place).
+reference data) and T27 (unpinned developer install). T30 (real or sensitive
+data committed) is Partial, not accepted: its residuals are listed below.
 
 ## Residual risks and open findings
 
@@ -658,7 +670,7 @@ data committed to the public repository, until scanning is in place).
 | Partial output file after a crash | T24 | Partial | None planned |
 | Developer install not hash-pinned; CI use of the lock not tested | T27 | Open | Locked install as the recommended developer workflow (separate authorization) |
 | Workflow security properties not tested | T28 | Accepted | Workflow-properties test (separate authorization) |
-| No secret or real-data scanning | T30 | Open | Secret and real-data scanning, before the labeled evaluation dataset is created |
+| Real data in free text or unknown forms not detected; history checked for secrets only; provenance rests on review | T30 | Partial | Review; evaluation outputs get their own checks before they are committed |
 | Interrupted append blocks later runs | T26 | Accepted | Manual repair |
 | Non-CommonMark renderers | T15 | Partial | None planned |
 | Lone surrogates in model tool arguments make `AgentResult.model_dump_json()` raise; the CLI never calls it | - | Accepted | Fix with the service |

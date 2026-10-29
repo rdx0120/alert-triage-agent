@@ -108,11 +108,12 @@ risk, and each control is marked as backed by tests, by committed
 configuration or only by written policy. `tests/test_threat_model.py`
 checks the document's structure, that every cited test and path exists and
 that every framework identifier is a known one; it does not check that a
-control works. Three threats are open: the KEV snapshot is built from a
-moving upstream source without hash verification (T18); the developer
-install is not hash-pinned (T27); and T30 (real or sensitive data committed)
-stays open until the commit scanning described in DD-028 has been verified
-on `main`. The embedding model is pinned and loaded offline (T20,
+control works. Two threats are open: the KEV snapshot is built from a
+moving upstream source without hash verification (T18); and the developer
+install is not hash-pinned (T27). Committed secrets and real data (T30) are
+Partial: every reachable commit is scanned for secrets and data-bearing
+files are checked and declared (DD-028), but pattern rules cannot prove that
+free text holds no real personal data. The embedding model is pinned and loaded offline (T20,
 Partial: the real libraries are checked by a manual slow test, not in CI).
 Accepted risks are accepted at laboratory level only, not as a production
 risk acceptance.
