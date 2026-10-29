@@ -96,6 +96,7 @@ service.
 | Embedding model pinned to one upstream revision and loaded only from a local directory that matches `data/embedding_model.json` byte for byte: ten files, safetensors weights only, no remote code, offline mode enforced; only `scripts/fetch_embedding_model.py` contacts the Hugging Face Hub, when the operator runs it | Model supply chain; network access at triage time | Implemented |
 | Hard per-request deadline (never more than the time left in the run), bounded worker threads, 1 MiB reply cap; malformed replies are backend errors | Hung or hostile model endpoint | Implemented |
 | Markdown summary: only fixed template text is Markdown; every value is shown as code (fenced blocks and code spans that the value cannot close); control, format, surrogate and line or paragraph separator characters are shown as `<U+XXXX>`; model output is labelled; an oversized summary is rejected, never truncated. Targets CommonMark/GFM. The CLI renders every `--out` summary with it (`triage.render.render_markdown`); the service is planned | Markdown injection in tickets, wikis and chat: remote images, links, raw HTML, forged headings, bidi reordering | Implemented |
+| Secret scan of every reachable commit, merges and all refs included, in CI with a pinned, checksum-verified gitleaks and synthetic controls that prove detection, history coverage and that no suppression applies; data-bearing files restricted to documentation IP ranges, reserved domains and declared hosts, each bound to an exact `provenance.json` entry by its SHA-256 (DD-028) | Secrets or real data committed to the public repository | Implemented |
 | Metadata-only JSONL audit log of every lookup and model call (OpenTelemetry GenAI field names) and, when the caller passes it, the guardrails' summary as codes and counts: no prompts, model text, tool arguments, tool data, error messages or endpoint, and no summary text, technique name, asset host or owner; owner-only, append-only file, opened through its checked directory, locked against concurrent writers, rolled back on a failed write and synced to disk. The CLI appends to it before printing or writing anything for every run, unless `--no-audit-log` is given; `run_agent()` itself writes nothing, and the service is planned | Lack of accountability; sensitive data in logs | Implemented |
 
 The threat model is in [`docs/threat-model.md`](docs/threat-model.md). It
@@ -109,8 +110,9 @@ checks the document's structure, that every cited test and path exists and
 that every framework identifier is a known one; it does not check that a
 control works. Three threats are open: the KEV snapshot is built from a
 moving upstream source without hash verification (T18); the developer
-install is not hash-pinned (T27); and nothing scans commits for secrets or
-real data (T30). The embedding model is pinned and loaded offline (T20,
+install is not hash-pinned (T27); and T30 (real or sensitive data committed)
+stays open until the commit scanning described in DD-028 has been verified
+on `main`. The embedding model is pinned and loaded offline (T20,
 Partial: the real libraries are checked by a manual slow test, not in CI).
 Accepted risks are accepted at laboratory level only, not as a production
 risk acceptance.
@@ -240,6 +242,17 @@ project dependency:
 uv pip compile pyproject.toml requirements/build.in --extra dev --generate-hashes --universal --python-version 3.11 -o requirements/ci.lock
 ```
 
+A second CI job, `secrets`, scans every reachable commit for secrets with
+gitleaks v8.30.1, a release binary verified by SHA-256 and used only in CI
+(DD-028). `scripts/secret_scan.py` first runs synthetic controls on
+throwaway repositories, then the full scan, and fails if the scanner's
+commit count differs from one computed independently with git. The offline
+suite checks the scan script with a fake scanner, and checks that every file
+in the git index follows the synthetic-data rules of its path and that every
+data-bearing file has an exact entry in `provenance.json`. After editing a
+data file, update its `sha256` there; after regenerating the Sigma samples,
+`scripts/build_sample_alerts.py` does that for them.
+
 Refresh the threat-intelligence snapshots:
 
 ```bash
@@ -256,7 +269,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
 | Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. The metadata-only audit writer is implemented, and the CLI writes the audit log for every run. Claude API (optional) and the service are planned | Partial |
 | Guardrails | Tool-side controls (allow-list, argument validation, fail-closed results) are implemented. Output guardrails (severity floor, ATT&CK allow-list with evidence binding, code-owned asset and gaps, citation re-check, fail-closed summary statuses) are implemented. The injection tripwire and spotlighting are implemented. The Markdown summary renderer is implemented and used by the CLI | Partial |
-| Service and packaging | The CLI (`python -m triage`, `alert-triage`) and GitHub Actions CI for the offline suite are implemented. FastAPI `POST /triage`, Docker and security scanning are planned | Partial |
+| Service and packaging | The CLI (`python -m triage`, `alert-triage`) and GitHub Actions CI for the offline suite are implemented. Secret scanning of the full history runs in CI. FastAPI `POST /triage`, Docker and dependency and container scanning are planned | Partial |
 | Evaluation and threat model | The threat model (`docs/threat-model.md`) is implemented. A labeled synthetic alert set with injection and missing-data cases, scoring against the rule-based baseline, and published results are planned | Partial |
 
 ## Limitations

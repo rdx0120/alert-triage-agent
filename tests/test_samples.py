@@ -1,6 +1,7 @@
 """Sample alerts: every file loads, generated files have not drifted, and the
 deliberate edge cases (stale technique, uninventoried host) stay deliberate."""
 
+import hashlib
 import importlib.util
 import json
 
@@ -46,6 +47,26 @@ def test_sigma_samples_match_generator():
     built = module.build_sigma_samples(PACK / "rules", PACK / "fixtures")
     committed = {p.stem: p.read_text(encoding="utf-8") for p in (SAMPLES / "sigma").glob("*.json")}
     assert {stem: module.render(s) for stem, s in built.items()} == committed
+
+
+def test_sample_build_refreshes_only_provenance_hashes(tmp_path):
+    """The generator may refresh a sample's sha256, never its class, source or other fields (DD-028)."""
+    spec = importlib.util.spec_from_file_location("build_sample_alerts", REPO_ROOT / "scripts" / "build_sample_alerts.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    (tmp_path / "samples").mkdir()
+    (tmp_path / "samples" / "a.json").write_text("{}\n", encoding="utf-8")
+    entry = {"path": "samples/a.json", "sha256": "0" * 64, "class": "synthetic", "notes": "kept"}
+    other = {"path": "data/b.json", "sha256": "1" * 64, "class": "public", "source": "kept"}
+    provenance = tmp_path / "provenance.json"
+    provenance.write_text(json.dumps({"version": 1, "files": [entry, other]}), encoding="utf-8")
+    module.refresh_provenance(provenance, tmp_path, ["samples/a.json"])
+    doc = json.loads(provenance.read_text(encoding="utf-8"))
+    digest = hashlib.sha256(b"{}\n").hexdigest()
+    assert doc == {"version": 1, "files": [{**entry, "sha256": digest}, other]}
+    (tmp_path / "samples" / "new.json").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(KeyError):   # a new sample needs a hand-written entry first
+        module.refresh_provenance(provenance, tmp_path, ["samples/new.json"])
 
 
 @pytest.fixture(scope="module")

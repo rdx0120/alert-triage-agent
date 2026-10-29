@@ -560,6 +560,9 @@ tests and CI, no model is loaded at all.
   without hashes. The developer-machine exposure is not accepted. Planned
   fix, separately authorized: make the hash-pinned locked install the
   recommended developer workflow in the README, not an optional alternative.
+  CI also downloads one binary outside the lock: gitleaks v8.30.1 for the
+  `secrets` job (DD-028), checked against a SHA-256 taken from that
+  release's checksums file and run only in that job, with a read-only token.
 
 ### T28 CI takeover from a pull request
 

@@ -4,6 +4,10 @@ One sample per rule whose fixture file has at least one true_positive event.
 Only true_positive events are used: false_positive fixtures are events the
 rule must NOT match, so they are not alerts.
 
+Writing also refreshes the samples' sha256 in provenance.json (DD-028). It
+never adds an entry or touches an entry's class or source: what a file is
+stays a reviewed, manual declaration.
+
 Usage:
     python scripts/build_sample_alerts.py           # write samples/alerts/sigma/*.json
     python scripts/build_sample_alerts.py --check   # exit 1 if the committed samples differ
@@ -12,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -21,6 +26,24 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACK = REPO_ROOT / "vendor" / "sigma-detection-pack"
 OUT_DIR = REPO_ROOT / "samples" / "alerts" / "sigma"
+PROVENANCE = REPO_ROOT / "provenance.json"
+
+
+def _synthetic_data():
+    """scripts/synthetic_data.py, loaded by path so this works as a script and when imported."""
+    spec = importlib.util.spec_from_file_location("synthetic_data", REPO_ROOT / "scripts" / "synthetic_data.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("synthetic_data", module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def refresh_provenance(provenance: Path, root: Path, rel_paths: list[str]) -> None:
+    """Refresh the sha256 of existing entries for rel_paths; nothing else changes."""
+    sd = _synthetic_data()
+    doc = json.loads(provenance.read_text(encoding="utf-8"))
+    files = {rel: (root / rel).read_bytes() for rel in rel_paths}
+    provenance.write_text(sd.render(sd.update_hashes(doc, files)), encoding="utf-8")
 
 
 def build_sigma_samples(rules_dir: Path, fixtures_dir: Path) -> dict[str, dict]:
@@ -94,7 +117,9 @@ def main(argv: list[str] | None = None) -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for stem, sample in samples.items():
         (OUT_DIR / f"{stem}.json").write_text(render(sample), encoding="utf-8")
-    print(f"wrote {len(samples)} samples to {OUT_DIR.relative_to(REPO_ROOT)}")
+    written = [(OUT_DIR / f"{stem}.json").relative_to(REPO_ROOT).as_posix() for stem in samples]
+    refresh_provenance(PROVENANCE, REPO_ROOT, written)
+    print(f"wrote {len(samples)} samples to {OUT_DIR.relative_to(REPO_ROOT)} and refreshed their provenance hashes")
     return 0
 
 
