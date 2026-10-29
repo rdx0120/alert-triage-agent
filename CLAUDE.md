@@ -31,6 +31,7 @@ repository. Human contributors should follow the same rules. Project overview:
   from github.com/rdx0120/sigma-detection-pack and update the commit hash in its
   `SOURCE.md`.
 - Never commit secrets, `.env`, `logs/` or model files.
+- Every data-bearing or reference file has its own exact entry in `provenance.json` (content SHA-256, class, source); add or update it in the same change (DD-028).
 - Work on a branch and open a pull request; do not push to `main`. One logical
   change per pull request, with test results in the description.
 

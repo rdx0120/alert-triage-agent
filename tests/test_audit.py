@@ -424,7 +424,7 @@ def test_model_name_kept(model, settings, tools):
 
 
 @pytest.mark.parametrize("model", [
-    ENDPOINT, "192.0.2.10:11434", "192.0.2.10", "2001:db8::1", "fe80::abcd", "::1", "[2001:db8::1]:11434",
+    ENDPOINT, "192.0.2.10:11434", "192.0.2.10", "2001:db8::1", "2001:db8::abcd", "::1", "[2001:db8::1]:11434",
     "localhost:11434", "ollama.example.internal:11434", "http://ollama.example.internal",
     "model:7",   # a digits-only tag is treated as a port and written as null
     "qwen 9b", "m" * 129,

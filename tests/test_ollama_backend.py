@@ -353,8 +353,8 @@ def test_bug_in_transport_propagates(investigate_request):
 
 @pytest.mark.parametrize("url,expected", [
     ("http://localhost:11434", Endpoint("http", "localhost", 11434)),
-    ("https://ollama.lan", Endpoint("https", "ollama.lan", 443)),
-    ("http://10.0.0.5:11434/", Endpoint("http", "10.0.0.5", 11434)),
+    ("https://ollama.example", Endpoint("https", "ollama.example", 443)),
+    ("http://192.0.2.5:11434/", Endpoint("http", "192.0.2.5", 11434)),
     ("http://[::1]:11434", Endpoint("http", "::1", 11434)),
 ])
 def test_valid_endpoints(url, expected):

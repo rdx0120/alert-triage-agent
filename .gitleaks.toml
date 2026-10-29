@@ -1,0 +1,6 @@
+# gitleaks configuration (DD-028). It must stay exactly this: the default
+# rules, with nothing disabled, added or allow-listed. tests/test_secret_scan.py
+# fails on any other content, and scripts/secret_scan.py passes this file
+# explicitly with --config so no other configuration can take its place.
+[extend]
+useDefault = true

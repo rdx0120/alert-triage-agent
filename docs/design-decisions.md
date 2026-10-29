@@ -842,3 +842,116 @@ tests are repeated whenever the dependencies change. The Hub may serve
 downloads from its CDN or Xet storage hosts; only the recorded hashes are
 trusted. Changing the model or its revision means measuring and reviewing a
 new manifest.
+
+---
+
+## DD-028: Every reachable commit is scanned for secrets, and data-bearing files are checked and declared
+
+**Context.** CLAUDE.md rule 1 (synthetic or public data only) and the ban on
+committed secrets were enforced only by review (threat T30). A scanner's
+own documentation was not enough to rely on. Reading the gitleaks v8.30.1
+source showed the following:
+
+- **No merge diffs by default.** Its default `git log` command shows no
+  diff for merge commits, so content introduced only by a merge (a conflict
+  resolution) is never scanned.
+- **The "commits scanned" count** includes commits whose only change
+  removes lines.
+- **Inline suppression.** A line containing the inline allow comment is
+  suppressed unless `--ignore-gitleaks-allow` is passed.
+- **Other configuration sources.** Environment variables and the scanned
+  directory's own files can replace or narrow the configuration.
+- **The ignore file.** `.gitleaksignore` in the scanned directory is always
+  loaded, and the whole line is the fingerprint.
+
+Git applies working-tree attributes to every historical commit, so one
+`*.json -diff` line would make every JSON change binary and invisible to the
+scanner.
+
+**Decision.** A `secrets` CI job, read-only and with no outputs, scans the
+full reachable history: `fetch-depth: 0`, every ref and
+`--diff-merges=first-parent`.
+- **The binary.** It installs the gitleaks v8.30.1 release binary, verified
+  against the SHA-256 in that release's checksums file.
+- **The invocation.** `scripts/secret_scan.py` runs gitleaks with a fixed
+  argument list and environment:
+  - the explicit repository `.gitleaks.toml`, which must be exactly the
+    default rules;
+  - `--ignore-gitleaks-allow`;
+  - an empty working directory and ignore path;
+  - no system or global git configuration.
+- **Refusals before scanning.** The script refuses:
+  - a shallow clone;
+  - a local attributes file;
+  - any `GITLEAKS_*` variable.
+- **The controls.** Before the real scan, the same invocation must pass
+  fourteen synthetic controls on throwaway repositories, each with
+  generated, never-committed tokens:
+  - detection;
+  - history;
+  - merges;
+  - unmerged refs;
+  - the five-rule panel;
+  - the inline comment;
+  - an exact ignore;
+  - the commit count.
+- **The coverage check.** Gitleaks' commit count must equal a count computed
+  independently from `git log --numstat` under the same options. A binary
+  entry fails closed.
+- **The stale-ignore check.** A rescan of a mirror without the ignore file
+  must find exactly the ignored fingerprints.
+
+`tests/test_synthetic_data.py` reads every file from the git index and
+applies path-class rules (`scripts/synthetic_data.py`):
+
+| Class | Paths | Rules |
+|---|---|---|
+| Data-bearing | `data/`, `samples/`, `tests/data/`, the vendored fixtures, `eval/` | IP addresses only in documentation or loopback ranges; reserved email and URL domains, plus exact per-file hosts; 555-01xx phone numbers only; no SSN shapes; no binaries |
+| Reference | The vendored rules and runbooks | As data-bearing, plus a list of ten public hosts |
+| Everything else | Code, tests, docs | The IP and email rules only |
+
+The rules run on every raw line and again on every decoded string of a JSON,
+JSONL or YAML file, so an escape such as `\u0038` cannot hide a value. Every
+value of a repeated key is checked, not only the last one a parser keeps.
+YAML is walked as its node graph, each node once, so an alias that refers back
+to itself cannot loop and alias expansion cannot grow. A file of those types
+that cannot be decoded completely (malformed, nested too deeply, or holding a
+binary scalar) fails in every class. An address is
+judged by the address ranges wherever it appears, URL and host fields
+included, and no message repeats a rejected value.
+
+Two further rules apply to every tracked file:
+- no file holds the inline allow comment;
+- no file may be a `.gitattributes`.
+
+`eval/results/` is reserved and rejected until its evaluation-output class
+is built.
+
+Each data-bearing and reference file has one entry in `provenance.json`,
+with its exact path, content SHA-256, class (synthetic or public) and a
+source for public data. `provenance.json` is the only metadata file:
+- it declares no hash of itself;
+- the commit binds it;
+- it is still scanned and schema-checked.
+
+`scripts/build_sample_alerts.py` refreshes only the hashes of the samples
+it generates.
+
+**Consequences.**
+- **What fails the check:**
+  - a secret in any default format, in the added lines of any text file at
+    any reachable commit, merges included;
+  - a routable address, real email domain or undeclared host in a
+    data-bearing file;
+  - a data file that is new or edited without its own provenance entry.
+- **Limits.**
+  - It cannot detect real personal data in free text, or secrets in
+    formats no rule knows or in skipped file types.
+  - It checks history for secrets only, and checks real-data forms only in
+    the current tree.
+  - The provenance declaration is true only as far as review makes it.
+  - A secret already published stays exposed; rotation is the remedy.
+- **The binary** is a CI-only download outside the lock; the project still
+  installs and tests without it, and the offline tests use a fake.
+- **Upgrading gitleaks** means re-reading its source for these behaviours.
+- **Each data change** also changes `provenance.json`.

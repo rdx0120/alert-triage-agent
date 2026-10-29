@@ -1,0 +1,5 @@
+# Exact gitleaks fingerprints to ignore (DD-028), one per line, each directly
+# after a "# reason: ..." line. Only commit:path:rule-id:line fingerprints are
+# allowed; scripts/secret_scan.py rejects any other form and fails when an
+# entry no longer matches a finding. A real credential is never ignored here:
+# it is rotated.
