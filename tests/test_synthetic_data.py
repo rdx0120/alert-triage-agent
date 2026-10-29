@@ -166,13 +166,13 @@ def test_allowed_forms_pass_in_data(text):
 def test_reference_hosts_are_allowed_only_in_reference_content():
     text = b"see https://attack.mitre.org/techniques/T1059/"
     assert sd.check_content("vendor/sigma-detection-pack/runbooks/x.md", text, sd.REFERENCE) == []
-    assert sd.check_content(sd.PROVENANCE, text, sd.METADATA) == []
+    assert sd.check_content(sd.PROVENANCE, json.dumps({"s": text.decode()}).encode(), sd.METADATA) == []
     found = sd.check_content("data/x.md", text, sd.DATA)
     assert len(found) == 1 and "URL host" in found[0]
 
 
 def test_permitted_hosts_are_per_file():
-    text = b"see https://mail.google.com/settings"
+    text = json.dumps({"u": "see https://mail.google.com/settings"}).encode()
     assert sd.check_content("data/x.json", text, sd.DATA, sd.FileRules(frozenset({"mail.google.com"}))) == []
     assert len(sd.check_content("data/x.json", text, sd.DATA)) == 1
 
@@ -205,8 +205,84 @@ def test_eval_results_are_reserved():
 
 
 def test_violation_messages_never_quote_the_value():
-    found = sd.check_content("data/x.txt", f"{PRIVATE_V4} {REAL_EMAIL}".encode(), sd.DATA)
-    assert found and not any(PRIVATE_V4 in f or REAL_EMAIL in f for f in found)
+    """No rejected value appears in a message: addresses, emails, URL hosts, host fields, phones."""
+    phone = "(212)" + "867-5309"
+    text = json.dumps({"note": f"{PRIVATE_V4} {REAL_EMAIL} https://{REAL_HOST}/p {phone}",
+                       "hostname": _dot("db", "corp", "net")})
+    found = sd.check_content("data/x.json", text.encode(), sd.DATA)
+    rules = {"IPv4", "email", "URL host", "host field", "phone"}
+    assert all(any(rule in f for f in found) for rule in rules), found
+    for value in (PRIVATE_V4, REAL_EMAIL, REAL_HOST, _dot("db", "corp", "net"), "867-5309", "corp"):
+        assert not any(value in f for f in found)
+
+
+# --- Escaped and parsed values (review finding I1) --------------------------------------
+
+def _escaped(value):
+    """value written as backslash-u escapes, so no line rule can see it in the raw text."""
+    return "".join(f"\\u{ord(c):04x}" for c in value)
+
+
+@pytest.mark.parametrize("key, value, rule", [
+    ("host", ROUTABLE_V4, "host field"),
+    ("note", ROUTABLE_V4, "IPv4"),
+    ("note", PRIVATE_V4, "IPv4"),
+    ("note", GLOBAL_V6, "IPv6"),
+    ("note", REAL_EMAIL, "email"),
+    ("note", "https://" + REAL_HOST + "/x", "URL host"),
+    ("note", "gitleaks" + ":allow", "inline scanner allow"),
+])
+def test_escaped_values_in_json_are_decoded_and_checked(key, value, rule):
+    raw = '{"%s": "%s"}' % (key, _escaped(value))
+    assert value not in raw and json.loads(raw)[key] == value
+    found = sd.check_content("data/x.json", raw.encode(), sd.DATA)
+    assert any(rule in f for f in found), found
+
+
+def test_escaped_documentation_address_passes():
+    raw = '{"host": "%s", "note": "%s"}' % (_escaped("192.0.2.8"), _escaped("ops@clinic.example"))
+    assert sd.check_content("data/x.json", raw.encode(), sd.DATA) == []
+
+
+@pytest.mark.parametrize("host, ok", [
+    (ROUTABLE_V4, False), (PRIVATE_V4, False), (LINK_LOCAL_V6, False),
+    ("192.0.2.8", True), ("127.0.0.1", True), ("2001:db8::8", True),
+])
+def test_ip_host_fields_and_url_hosts_are_judged_by_the_address_ranges(host, ok):
+    field = json.dumps({"host": host}).encode()
+    url_host = f"[{host}]" if ":" in host else host
+    url = json.dumps({"u": f"http://{url_host}:80/"}).encode()
+    for data in (field, url):
+        assert (sd.check_content("data/x.json", data, sd.DATA) == []) == ok
+
+
+def test_escaped_values_in_jsonl_and_yaml_are_checked():
+    jsonl = '{"a": 1}\n{"note": "%s"}\n' % _escaped(ROUTABLE_V4)
+    assert any("IPv4" in f for f in sd.check_content("tests/data/x.jsonl", jsonl.encode(), sd.DATA))
+    yml = 'title: x\nnote: "%s"\n' % _escaped(REAL_EMAIL)   # YAML double quotes decode it too
+    assert any("email" in f for f in sd.check_content("vendor/sigma-detection-pack/rules/x.yml",
+                                                       yml.encode(), sd.REFERENCE))
+
+
+def test_unparseable_structured_data_fails_closed():
+    found = sd.check_content("data/x.json", b'{"note": "unterminated', sd.DATA)
+    assert len(found) == 1 and "does not parse" in found[0]
+
+
+@pytest.mark.parametrize("text", [
+    "(212)" + "867-5309", "(212) " + "867-5309", "212-" + "867-5309", "212." + "867.5309",
+    "+1 212-" + "867-5309", "+1(212)" + "867-5309", "1-212-" + "867-5309",
+])
+def test_phone_forms_are_detected(text):
+    found = sd.check_content("data/x.txt", f"call {text} now".encode(), sd.DATA)
+    assert len(found) == 1 and "phone" in found[0]
+
+
+@pytest.mark.parametrize("text", [
+    "(212)" + "555-0150", "(212) 555-0100", "212-555-0199", "+1 405.555.0123",
+])
+def test_reserved_phone_forms_pass(text):
+    assert sd.check_content("data/x.txt", f"call {text} now".encode(), sd.DATA) == []
 
 
 @pytest.mark.parametrize("path, cls", [

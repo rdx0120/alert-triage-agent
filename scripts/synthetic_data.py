@@ -74,7 +74,10 @@ IPV4_RE = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{1,3}){3})(?![\w.]*\d)")
 IPV6_RE = re.compile(r"(?<![\w:.])((?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4})(?![\w:])")
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})")
 URL_RE = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://([^/\s\"'<>)\]`]+)")
-PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[ .-])?\(?(\d{3})\)?[ .-](\d{3})[ .-](\d{4})(?!\d)")
+# North American numbers: "(212)867-5309", "(212) 867-5309", "212-867-5309",
+# "212.867.5309", optionally after "+1". The area code is either in
+# parentheses (a separator after it is optional) or followed by a separator.
+PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[ .-]?)?(?:\((\d{3})\)[ .-]?|(\d{3})[ .-])(\d{3})[ .-](\d{4})(?!\d)")
 SSN_RE = re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")
 HOST_KEYS = frozenset({"host", "hostname", "domain", "fqdn"})
 
@@ -114,13 +117,16 @@ def _host_of(netloc: str) -> str:
 
 def _host_ok(host: str, cls: str, rules: FileRules) -> bool:
     host = host.lower().rstrip(".")
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        addr = None
+    if addr is not None:
+        # An address is judged by the address ranges, whatever text it came
+        # from (a URL, a host field, a decoded JSON escape).
+        return _ipv4_ok(host) if addr.version == 4 else _ipv6_ok(host)
     if is_reserved_host(host) or host in rules.permitted_hosts:
         return True
-    try:
-        ipaddress.ip_address(host)
-        return True   # an address: the IP rules judge it
-    except ValueError:
-        pass
     return cls in (REFERENCE, METADATA) and host in REFERENCE_HOSTS
 
 
@@ -138,6 +144,63 @@ def _ipv6_ok(text: str) -> bool:
     except ValueError:
         return True
     return any(addr in net for net in ALLOWED_IPV6)
+
+
+def _strings(value, out: list[str]) -> None:
+    """Every string in a parsed document, keys included, after escapes are decoded."""
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _strings(k, out)
+            _strings(v, out)
+    elif isinstance(value, list):
+        for v in value:
+            _strings(v, out)
+
+
+def _decoded_documents(path: str, text: str):
+    """Parsed JSON, JSONL or YAML documents, or None if the type has no escapes to decode.
+
+    Raises ValueError when such a file does not parse.
+    """
+    if path.endswith(".json"):
+        return [json.loads(text)]
+    if path.endswith(".jsonl"):
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
+    if path.endswith((".yml", ".yaml")):
+        import yaml   # dev dependency; the tests that call this run with it installed
+        return list(yaml.safe_load_all(text))
+    return None
+
+
+def _line_rules(line: str, cls: str, rules: FileRules) -> list[str]:
+    """Rule messages for one line of text. Messages never include the matched value."""
+    found = []
+    if INLINE_ALLOW in line:
+        found.append("inline scanner allow comment")
+    for m in IPV4_RE.finditer(line):
+        if not _ipv4_ok(m.group(1)):
+            found.append("IPv4 address outside documentation and loopback ranges")
+    for m in IPV6_RE.finditer(line):
+        if not _ipv6_ok(m.group(1)):
+            found.append("IPv6 address outside 2001:db8::/32 and loopback")
+    for m in EMAIL_RE.finditer(line):
+        if not is_reserved_host(m.group(1)):
+            found.append("email address outside reserved domains")
+    if cls not in (DATA, REFERENCE, METADATA):
+        return found
+    for m in URL_RE.finditer(line):
+        host = _host_of(m.group(1))
+        if host and not _host_ok(host, cls, rules):
+            found.append("URL host not reserved or permitted")
+    for m in PHONE_RE.finditer(line):
+        exchange, number_part = m.group(3), int(m.group(4))
+        if not (exchange == "555" and 100 <= number_part <= 199):
+            found.append("phone number outside 555-0100 to 555-0199")
+    if SSN_RE.search(line):
+        found.append("SSN-shaped number")
+    return found
 
 
 def _json_host_values(value, out: list[str]) -> None:
@@ -177,41 +240,39 @@ def check_content(path: str, data: bytes, cls: str, rules: FileRules | None = No
 
     strict = cls in (DATA, REFERENCE, METADATA)
     for number, line in enumerate(text.split("\n"), start=1):
-        where = f"{path}:{number}"
-        if INLINE_ALLOW in line:
-            found.append(f"{where}: inline scanner allow comment")
-        for m in IPV4_RE.finditer(line):
-            if not _ipv4_ok(m.group(1)):
-                found.append(f"{where}: IPv4 address outside documentation and loopback ranges")
-        for m in IPV6_RE.finditer(line):
-            if not _ipv6_ok(m.group(1)):
-                found.append(f"{where}: IPv6 address outside 2001:db8::/32 and loopback")
-        for m in EMAIL_RE.finditer(line):
-            if not is_reserved_host(m.group(1)):
-                found.append(f"{where}: email address outside reserved domains")
-        if not strict:
-            continue
-        for m in URL_RE.finditer(line):
-            host = _host_of(m.group(1))
-            if host and not _host_ok(host, cls, rules):
-                found.append(f"{where}: URL host not reserved or permitted ({host})")
-        for m in PHONE_RE.finditer(line):
-            exchange, number_part = m.group(2), int(m.group(3))
-            if not (exchange == "555" and 100 <= number_part <= 199):
-                found.append(f"{where}: phone number outside 555-0100 to 555-0199")
-        if SSN_RE.search(line):
-            found.append(f"{where}: SSN-shaped number")
+        found += [f"{path}:{number}: {message}" for message in _line_rules(line, cls, rules)]
 
-    if strict and path.endswith(".json"):
-        try:
-            doc = json.loads(text)
-        except ValueError:
-            doc = None
-        hosts: list[str] = []
-        _json_host_values(doc, hosts)
-        for host in hosts:
-            if "." in host and not _host_ok(host, cls, rules):
-                found.append(f"{path}: host field not reserved or permitted ({host})")
+    # Escapes such as \u0038 in JSON or YAML hide a value from the line rules,
+    # so the same rules also run on every decoded string. A rule already
+    # reported for this file from the raw text is not repeated: the file fails
+    # either way.
+    try:
+        docs = _decoded_documents(path, text)
+    except ValueError:
+        docs = None
+        if strict:
+            found.append(f"{path}: data-bearing file does not parse, so escaped text cannot be checked")
+    except ImportError:
+        docs = None
+        if strict:
+            found.append(f"{path}: YAML cannot be decoded here, so escaped text cannot be checked")
+    if docs is not None:
+        raw = {f.split(": ", 1)[1] for f in found if ": " in f}
+        strings: list[str] = []
+        for doc in docs:
+            _strings(doc, strings)
+        decoded = []
+        for value in strings:
+            for line in value.split("\n"):
+                decoded += [m for m in _line_rules(line, cls, rules) if m not in raw and m not in decoded]
+        found += [f"{path}: {message} (in a decoded string)" for message in decoded]
+        if strict:
+            hosts: list[str] = []
+            for doc in docs:
+                _json_host_values(doc, hosts)
+            for host in hosts:
+                if "." in host and not _host_ok(host, cls, rules):
+                    found.append(f"{path}: host field not reserved or permitted")
     return found
 
 

@@ -910,6 +910,12 @@ applies path-class rules (`scripts/synthetic_data.py`):
 | Reference | The vendored rules and runbooks | As data-bearing, plus a list of ten public hosts |
 | Everything else | Code, tests, docs | The IP and email rules only |
 
+The rules run on every raw line and again on every decoded string of a JSON,
+JSONL or YAML file, so an escape such as `\u0038` cannot hide a value; a
+data-bearing file of those types that does not parse fails. An address is
+judged by the address ranges wherever it appears, URL and host fields
+included, and no message repeats a rejected value.
+
 Two further rules apply to every tracked file:
 - no file holds the inline allow comment;
 - no file may be a `.gitattributes`.
