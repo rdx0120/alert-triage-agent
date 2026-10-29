@@ -911,8 +911,12 @@ applies path-class rules (`scripts/synthetic_data.py`):
 | Everything else | Code, tests, docs | The IP and email rules only |
 
 The rules run on every raw line and again on every decoded string of a JSON,
-JSONL or YAML file, so an escape such as `\u0038` cannot hide a value; a
-data-bearing file of those types that does not parse fails. An address is
+JSONL or YAML file, so an escape such as `\u0038` cannot hide a value. Every
+value of a repeated key is checked, not only the last one a parser keeps.
+YAML is walked as its node graph, each node once, so an alias that refers back
+to itself cannot loop and alias expansion cannot grow. A file of those types
+that cannot be decoded completely (malformed, nested too deeply, or holding a
+binary scalar) fails in every class. An address is
 judged by the address ranges wherever it appears, URL and host fields
 included, and no message repeats a rejected value.
 

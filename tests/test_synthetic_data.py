@@ -266,7 +266,7 @@ def test_escaped_values_in_jsonl_and_yaml_are_checked():
 
 def test_unparseable_structured_data_fails_closed():
     found = sd.check_content("data/x.json", b'{"note": "unterminated', sd.DATA)
-    assert len(found) == 1 and "does not parse" in found[0]
+    assert len(found) == 1 and "cannot be decoded" in found[0]
 
 
 @pytest.mark.parametrize("text", [
@@ -357,3 +357,63 @@ def test_update_hashes_changes_only_sha256():
 def test_update_hashes_never_adds_an_entry():
     with pytest.raises(KeyError):
         sd.update_hashes(_doc(), {"data/new.json": b"{}\n"})
+
+
+# --- Repeated keys and hostile structure (review findings I3, I4) ---------------------------
+
+ESCAPED_IP = _escaped(ROUTABLE_V4)
+LAST_WINS = {
+    "json": ('{"host": "%s", "host": "CLINIC-FRONT01"}', "data/x.json"),
+    "json-note": ('{"note": "%s", "note": "clean"}', "data/x.json"),
+    "jsonl": ('{"a": 1}\n{"note": "%s", "note": "clean"}\n', "tests/data/x.jsonl"),
+    "yaml": ('host: "%s"\nhost: CLINIC-FRONT01\n', "vendor/sigma-detection-pack/rules/x.yml"),
+    "yaml-note": ('note: "%s"\nnote: clean\n', "vendor/sigma-detection-pack/rules/x.yml"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(LAST_WINS))
+def test_an_earlier_value_of_a_repeated_key_is_still_checked(name):
+    """A parser keeps only the last value of a repeated key; the check must see every value."""
+    template, path = LAST_WINS[name]
+    data = (template % ESCAPED_IP).encode()
+    assert ROUTABLE_V4 not in data.decode()
+    found = sd.check_content(path, data, sd.path_class(path))
+    assert any("IPv4" in f or "host field" in f for f in found), found
+
+
+@pytest.mark.parametrize("name", sorted(LAST_WINS))
+def test_repeated_keys_with_allowed_values_pass(name):
+    template, path = LAST_WINS[name]
+    data = (template % _escaped("192.0.2.8")).encode()
+    assert sd.check_content(path, data, sd.path_class(path)) == []
+
+
+@pytest.mark.parametrize("path, data", [
+    ("vendor/sigma-detection-pack/rules/x.yml", b"title: [unclosed\n"),        # scanner error
+    ("vendor/sigma-detection-pack/rules/x.yml", b"a: *undefined\n"),           # composer error
+    ("vendor/sigma-detection-pack/rules/x.yml", b"a: !!binary aGVsbG8=\n"),     # encoded content
+    ("vendor/sigma-detection-pack/rules/x.yml", b"a:\n\tb: tab\n"),             # tab indentation
+    (".github/workflows/x.yml", b"on: [push\n"),                               # every class
+    ("data/x.json", b"[" * 100_000 + b"]" * 100_000),                         # nesting too deep
+    ("vendor/sigma-detection-pack/rules/x.yml", b"[" * 100_000 + b"]" * 100_000),
+])
+def test_undecodable_structured_files_fail_closed_without_raising(path, data):
+    found = sd.check_content(path, data, sd.path_class(path))
+    assert any("cannot be decoded" in f for f in found), found
+
+
+def test_cyclic_yaml_aliases_are_walked_once():
+    """An alias referring back to its own anchor must neither loop nor hide a value."""
+    clean = b"a: &x [one, *x]\nb: &y {k: *y}\n"
+    assert sd.check_content("vendor/sigma-detection-pack/rules/x.yml", clean, sd.REFERENCE) == []
+    hidden = ('a: &x ["%s", *x]\n' % ESCAPED_IP).encode()
+    found = sd.check_content("vendor/sigma-detection-pack/rules/x.yml", hidden, sd.REFERENCE)
+    assert any("IPv4" in f for f in found), found
+
+
+def test_yaml_alias_expansion_is_not_exponential():
+    """A billion-laughs document is walked node by node, never expanded."""
+    lines = ["a0: &a0 [x, x, x, x, x, x, x, x, x, x]"]
+    lines += [f"a{i}: &a{i} [" + ", ".join([f"*a{i - 1}"] * 10) + "]" for i in range(1, 9)]
+    data = ("\n".join(lines) + "\n").encode()
+    assert sd.check_content("vendor/sigma-detection-pack/rules/x.yml", data, sd.REFERENCE) == []

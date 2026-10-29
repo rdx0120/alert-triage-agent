@@ -146,32 +146,96 @@ def _ipv6_ok(text: str) -> bool:
     return any(addr in net for net in ALLOWED_IPV6)
 
 
-def _strings(value, out: list[str]) -> None:
-    """Every string in a parsed document, keys included, after escapes are decoded."""
-    if isinstance(value, str):
-        out.append(value)
-    elif isinstance(value, dict):
-        for k, v in value.items():
-            _strings(k, out)
-            _strings(v, out)
-    elif isinstance(value, list):
-        for v in value:
-            _strings(v, out)
+class DecodeError(Exception):
+    """A structured file could not be decoded, so its escaped text cannot be checked."""
 
 
-def _decoded_documents(path: str, text: str):
-    """Parsed JSON, JSONL or YAML documents, or None if the type has no escapes to decode.
+class _Pairs(list):
+    """A JSON object kept as its (key, value) pairs, so a repeated key hides nothing."""
 
-    Raises ValueError when such a file does not parse.
+
+def _decoded_json(text: str):
+    # object_pairs_hook keeps every pair: json.loads would otherwise keep only
+    # the last value of a repeated key, and an earlier one would go unchecked.
+    return json.loads(text, object_pairs_hook=_Pairs)
+
+
+def _json_items(doc, strings: list[str], hosts: list[str]) -> None:
+    """Every string (keys included) and every host-field value, walked iteratively."""
+    stack = [doc]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, str):
+            strings.append(value)
+        elif isinstance(value, _Pairs):
+            for k, v in value:
+                strings.append(k)
+                if k.lower() in HOST_KEYS and isinstance(v, str):
+                    hosts.append(v)
+                stack.append(v)
+        elif isinstance(value, list):
+            stack.extend(value)
+
+
+def _yaml_items(text: str, strings: list[str], hosts: list[str]) -> None:
+    """Every scalar and host-field value of every YAML document, from the node graph.
+
+    The composed node graph keeps every key of a mapping, repeated ones
+    included, and holds each scalar with its escapes already decoded. Nodes
+    are visited once each, so an alias that refers back to its own anchor
+    cannot loop. Binary scalars are rejected: their content is encoded.
     """
-    if path.endswith(".json"):
-        return [json.loads(text)]
-    if path.endswith(".jsonl"):
-        return [json.loads(line) for line in text.splitlines() if line.strip()]
-    if path.endswith((".yml", ".yaml")):
-        import yaml   # dev dependency; the tests that call this run with it installed
-        return list(yaml.safe_load_all(text))
-    return None
+    import yaml   # dev dependency; the tests that call this run with it installed
+    seen: set[int] = set()
+    stack = list(yaml.compose_all(text, Loader=yaml.SafeLoader))
+    while stack:
+        node = stack.pop()
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, yaml.ScalarNode):
+            if node.tag == "tag:yaml.org,2002:binary":
+                raise DecodeError("binary YAML scalar")
+            strings.append(node.value)
+        elif isinstance(node, yaml.MappingNode):
+            for key, value in node.value:
+                if (isinstance(key, yaml.ScalarNode) and isinstance(value, yaml.ScalarNode)
+                        and key.value.lower() in HOST_KEYS):
+                    hosts.append(value.value)
+                stack.extend((key, value))
+        elif isinstance(node, yaml.SequenceNode):
+            stack.extend(node.value)
+
+
+def _decoded_items(path: str, text: str) -> tuple[list[str], list[str]] | None:
+    """(strings, host-field values) of a JSON, JSONL or YAML file; None for other types.
+
+    Raises DecodeError when such a file cannot be decoded completely.
+    """
+    strings: list[str] = []
+    hosts: list[str] = []
+    try:
+        if path.endswith(".json"):
+            _json_items(_decoded_json(text), strings, hosts)
+        elif path.endswith(".jsonl"):
+            for line in text.splitlines():
+                if line.strip():
+                    _json_items(_decoded_json(line), strings, hosts)
+        elif path.endswith((".yml", ".yaml")):
+            _yaml_items(text, strings, hosts)
+        else:
+            return None
+    except DecodeError:
+        raise
+    except ImportError:
+        raise DecodeError("YAML support is not installed") from None
+    except (ValueError, RecursionError) as error:   # json errors and nesting too deep
+        raise DecodeError(type(error).__name__) from None
+    except Exception as error:
+        # yaml.YAMLError and anything else a parser raises: never let a
+        # malformed file stop the check, and never let it pass unchecked.
+        raise DecodeError(type(error).__name__) from None
+    return strings, hosts
 
 
 def _line_rules(line: str, cls: str, rules: FileRules) -> list[str]:
@@ -201,17 +265,6 @@ def _line_rules(line: str, cls: str, rules: FileRules) -> list[str]:
     if SSN_RE.search(line):
         found.append("SSN-shaped number")
     return found
-
-
-def _json_host_values(value, out: list[str]) -> None:
-    if isinstance(value, dict):
-        for k, v in value.items():
-            if isinstance(k, str) and k.lower() in HOST_KEYS and isinstance(v, str):
-                out.append(v)
-            _json_host_values(v, out)
-    elif isinstance(value, list):
-        for v in value:
-            _json_host_values(v, out)
 
 
 def check_content(path: str, data: bytes, cls: str, rules: FileRules | None = None) -> list[str]:
@@ -245,31 +298,22 @@ def check_content(path: str, data: bytes, cls: str, rules: FileRules | None = No
     # Escapes such as \u0038 in JSON or YAML hide a value from the line rules,
     # so the same rules also run on every decoded string. A rule already
     # reported for this file from the raw text is not repeated: the file fails
-    # either way.
+    # either way. A JSON, JSONL or YAML file that cannot be decoded completely
+    # fails in every class, since its escaped text cannot be checked.
     try:
-        docs = _decoded_documents(path, text)
-    except ValueError:
-        docs = None
-        if strict:
-            found.append(f"{path}: data-bearing file does not parse, so escaped text cannot be checked")
-    except ImportError:
-        docs = None
-        if strict:
-            found.append(f"{path}: YAML cannot be decoded here, so escaped text cannot be checked")
-    if docs is not None:
+        items = _decoded_items(path, text)
+    except DecodeError:
+        found.append(f"{path}: structured file cannot be decoded, so escaped text cannot be checked")
+        items = None
+    if items is not None:
+        strings, hosts = items
         raw = {f.split(": ", 1)[1] for f in found if ": " in f}
-        strings: list[str] = []
-        for doc in docs:
-            _strings(doc, strings)
         decoded = []
         for value in strings:
             for line in value.split("\n"):
                 decoded += [m for m in _line_rules(line, cls, rules) if m not in raw and m not in decoded]
         found += [f"{path}: {message} (in a decoded string)" for message in decoded]
         if strict:
-            hosts: list[str] = []
-            for doc in docs:
-                _json_host_values(doc, hosts)
             for host in hosts:
                 if "." in host and not _host_ok(host, cls, rules):
                     found.append(f"{path}: host field not reserved or permitted")
