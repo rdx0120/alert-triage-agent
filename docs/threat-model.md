@@ -5,8 +5,9 @@ today, the controls that address them and the risk that remains. It covers
 the command-line runner and everything it runs, the local data it reads, and
 the supply chain that builds and tests it. Components that are still planned
 (the HTTP service, Docker packaging, the optional Claude API backend,
-security scanning and any production Wazuh integration) are listed in
-[Future attack surfaces](#future-attack-surfaces) and are not modelled.
+dependency and container scanning and any production Wazuh integration) are
+listed in [Future attack surfaces](#future-attack-surfaces) and are not
+modelled.
 
 `tests/test_threat_model.py` checks this document against the repository:
 every cited test and path must exist, every status must be one of the five
@@ -605,20 +606,26 @@ tests and CI, no model is loaded at all.
   - [test] The secret scan's argument list, environment, configuration, ignore format, expected commit count and CI job are fixed, and their fail-closed paths are tested with a fake scanner: `tests/test_secret_scan.py::test_gitleaks_args_are_exact`, `tests/test_secret_scan.py::test_scan_environment_is_exact`, `tests/test_secret_scan.py::test_repository_configuration_is_the_approved_one`, `tests/test_secret_scan.py::test_expected_commits_rows`, `tests/test_secret_scan.py::test_binary_entry_fails_closed`, `tests/test_secret_scan.py::test_secrets_job_is_read_only_and_full_depth`
   - [config] The `secrets` CI job scans every reachable commit, merges included, with gitleaks v8.30.1 verified by SHA-256, after synthetic controls C1 to C14 prove detection, history and merge coverage and that no suppression applies; its commit count must equal one computed independently from git (DD-028): `.github/workflows/ci.yml`, `scripts/secret_scan.py`
   - [policy] Synthetic or public data only, and never secrets, `.env` or `logs/` (`CLAUDE.md`, hard rule 1 and Conventions).
-  - [policy] GitHub secret scanning and push protection are enabled for the repository; they are settings managed by the owner outside the repository.
+  - [policy] GitHub secret scanning and push protection are enabled for the repository. They are repository settings the owner manages outside the repository, so no file can show them; their state was read through the GitHub REST API when T30 moved to Partial and is re-read whenever this entry changes.
   - [config] `.gitignore` excludes `.env` and `logs/`: `.gitignore`
 - Residual: real personal data in free text, in names or in forms no rule
-  covers is not detected: pattern rules cannot prove that data is synthetic.
-  History is checked for secrets only; real-data forms are checked in the
-  current tree, so personal data committed and later deleted would not be
-  found. Secrets in formats no rule knows, in file types the scanner's
+  covers is not detected: pattern rules cannot prove that data is synthetic,
+  and a scan with no findings is not a guarantee that no sensitive data is
+  present. History is checked for secrets only; real-data forms are checked
+  in the current tree, so personal data committed and later deleted would not
+  be found. Secrets in formats no rule knows, in file types the scanner's
   default allow-list skips, or in non-archive binaries are not detected. A
   provenance declaration is true only as far as review makes it. A secret
   already published stays exposed in clones and forks; rotation is the
   remedy. The gate lives in one workflow, so a change that weakens both the
   workflow and its tests is caught only by review (as for T28), and the
-  GitHub-side settings can change outside the repository. Developer
-  machines are not covered.
+  GitHub-side settings can change outside the repository. The `secrets` job
+  is not a required check and `main` has no branch protection, so a pull
+  request can be merged with a failing scan and a direct push to `main` is
+  scanned only after it lands; making the job required is a pending owner
+  setting. GitHub's generic (non-provider) secret patterns are disabled;
+  enabling them is a pending owner setting. Developer machines are not
+  covered.
 
 ## Not applicable
 
@@ -670,7 +677,7 @@ data committed) is Partial, not accepted: its residuals are listed below.
 | Partial output file after a crash | T24 | Partial | None planned |
 | Developer install not hash-pinned; CI use of the lock not tested | T27 | Open | Locked install as the recommended developer workflow (separate authorization) |
 | Workflow security properties not tested | T28 | Accepted | Workflow-properties test (separate authorization) |
-| Real data in free text or unknown forms not detected; history checked for secrets only; provenance rests on review | T30 | Partial | Review; evaluation outputs get their own checks before they are committed |
+| Real data in free text or unknown forms not detected; history checked for secrets only; provenance rests on review; scan not yet a required check | T30 | Partial | Required `secrets` check and generic secret patterns (owner settings); review; evaluation outputs get their own checks before they are committed |
 | Interrupted append blocks later runs | T26 | Accepted | Manual repair |
 | Non-CommonMark renderers | T15 | Partial | None planned |
 | Lone surrogates in model tool arguments make `AgentResult.model_dump_json()` raise; the CLI never calls it | - | Accepted | Fix with the service |

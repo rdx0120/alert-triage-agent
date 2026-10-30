@@ -113,8 +113,9 @@ moving upstream source without hash verification (T18); and the developer
 install is not hash-pinned (T27). Committed secrets and real data (T30) are
 Partial: every reachable commit is scanned for secrets and data-bearing
 files are checked and declared (DD-028), but pattern rules cannot prove that
-free text holds no real personal data. The embedding model is pinned and loaded offline (T20,
-Partial: the real libraries are checked by a manual slow test, not in CI).
+free text holds no real personal data, and the scan is not yet a required
+check. The embedding model is pinned and loaded offline (T20, Partial: the
+real libraries are checked by a manual slow test, not in CI).
 Accepted risks are accepted at laboratory level only, not as a production
 risk acceptance.
 
