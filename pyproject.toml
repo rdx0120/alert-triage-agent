@@ -27,6 +27,7 @@ include = ["triage*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "slow: needs the sentence-transformers model download (run with -m slow)",
     "ollama: needs a running Ollama server; set OLLAMA_MODEL (run with -m ollama)",
