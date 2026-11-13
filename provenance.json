@@ -43,6 +43,12 @@
       "source": "CISA KEV catalog 2026.10.14 and FIRST EPSS 2026-10-14, built by scripts/build_kev_epss.py"
     },
     {
+      "path": "eval/rubric.md",
+      "sha256": "57fad906181701d8ba385ffff257646eb72bdeba4aed24d171e5c239fab92033",
+      "class": "synthetic",
+      "notes": "Labelling rules for the evaluation cases, written before any label."
+    },
+    {
       "path": "samples/README.md",
       "sha256": "e069a55ffe131264d67c3cf9c7d572695540c8739b25df5204f32993e888bdbc",
       "class": "synthetic"
@@ -118,6 +124,24 @@
       "sha256": "8b1c09de9ddba53c8a36f5262eb148f062a2b353e4febe7bfdf4f390ff6253e8",
       "class": "synthetic",
       "notes": "Audit log fixture from a heuristic run on synthetic samples."
+    },
+    {
+      "path": "tests/data/eval/aggregate_fixture.json",
+      "sha256": "249d7b6d3a6b61f6c919290769ae540bd07b44723e6f9f68dcec5a5fb713dc20",
+      "class": "synthetic",
+      "notes": "Hand-written aggregation fixture for the evaluation scorer; fictional cases."
+    },
+    {
+      "path": "tests/data/eval/report_expected.md",
+      "sha256": "c95368a3b95bddec6e2be7ca0739176db7e9af457a3de7a1ef1ff6e67946fb12",
+      "class": "synthetic",
+      "notes": "Expected reporting-template output for the aggregation fixture."
+    },
+    {
+      "path": "tests/data/eval/scorer_fixtures.json",
+      "sha256": "0397bc3ba30af097fca2c7efc693f9afb965d4bc34b550fbce06a778f34e58d0",
+      "class": "synthetic",
+      "notes": "Hand-written per-run fixtures for the evaluation scorer; fictional cases."
     },
     {
       "path": "vendor/sigma-detection-pack/fixtures/edr_agent_tampering.json",

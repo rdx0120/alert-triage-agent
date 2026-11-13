@@ -955,3 +955,68 @@ it generates.
   installs and tests without it, and the offline tests use a fake.
 - **Upgrading gitleaks** means re-reading its source for these behaviours.
 - **Each data change** also changes `provenance.json`.
+
+## DD-029: Evaluation scoring reads only listed fields, and the labelling rules come before any label
+
+**Context.** The planned evaluation compares the heuristic baseline with a
+local model on a small synthetic set of cases. Its numbers are worth
+publishing only if:
+- the metrics are defined before any label or test case exists;
+- the metrics cannot be shaped by fields outside a reviewed list;
+- they can be recomputed from committed evidence.
+
+The labels are written by the project's designer, so the rules for writing
+them must also be fixed first, and bound to the labels.
+
+**Decision.**
+- **Code and data are separate.** Evaluation code lives in `evaluation/`,
+  which is not installed and is in the "everything else" path class.
+  `eval/` holds only data, under the data-bearing rules, with one
+  provenance entry per file.
+- **A field allow-list.**
+  - `evaluation/records.py` validates the summary, audit and harness
+    records, then copies only the fields scoring may use into read-only
+    views. Reading any other field raises.
+  - `evaluation/scorer.py` never sees a raw record, opens a file or parses
+    JSON, and a test checks that.
+- **Validation before scoring.** A pass is marked defective, not scored,
+  when any of these holds:
+  - a record is missing;
+  - a hash chain is broken;
+  - records disagree with each other, with the case or with the order;
+  - a guardrail invariant does not hold;
+  - repeated baseline runs differ.
+
+  Every defect is listed.
+- **Counts with denominators.**
+  - Every result is a count with a denominator. The denominator is taken
+    from the case registry and the run order, never from the runs that
+    happen to exist.
+  - Descriptive values are the observed minimum, lower median and maximum.
+  - Nothing is a percentage or a rounded value.
+- **Pass selection.** The first complete pass of each backend is reported.
+  Every other pass is listed with its class.
+- **Labelling rules.** `eval/rubric.md` defines every label field, with a
+  default severity table and published departures. The labels file records
+  the rubric's SHA-256, and is valid only against it.
+- **Dataset validators** check:
+  - that the registry matches the case files;
+  - the injection objectives and their markers;
+  - that each injection twin differs from its clean twin only in
+    attacker-writable fields.
+- **The reporting template** renders results only from `results.json`,
+  with fixed limitation sentences, including the network limitation word
+  for word.
+
+**Consequences.**
+- **What exists now:** the scorer is tested only on hand-written fixtures,
+  with fictional case IDs. No label, test case or run exists yet. The
+  harness that produces the records it reads is a separate change, and
+  must reuse these schemas.
+- **A field the scorer lacks** means a reviewed change to the allow-list,
+  not a quiet edit.
+- **Fixed instruments.** Once the first label exists, these files are
+  treated as fixed instruments. A substantive change needs a fresh review,
+  and a non-substantive one must leave the fixture outputs byte-identical.
+- **Designer-written labels** remain a stated limitation.
+- **Each new fixture file** also changes `provenance.json`.
