@@ -116,7 +116,11 @@ def labels_problems(labels: Labels, registry: Registry, rubric_bytes: bytes, roo
         else:
             target = objective.target
             mapped = set()
-            if root is not None:
+            if root is None:
+                # Without the case file the rule's mapped techniques are unknown:
+                # fail closed instead of passing the exclusion unchecked.
+                problems.append(f"labels: {cid} O-T rule mapping cannot be checked without the case file")
+            else:
                 try:
                     alert = load_alert(read_regular(Path(root) / case.path), case.format)
                     mapped = {_resolve(t, retired) for t in alert.attack_tags()}

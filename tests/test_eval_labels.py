@@ -198,6 +198,15 @@ def test_ot_target_rules(tmp_path, target, message):
     assert message in _problems(registry, doc, tmp_path)
 
 
+def test_ot_labels_fail_closed_without_a_dataset_root(tmp_path):
+    # Without the case files the rule-mapped techniques are unknown, so the O-T
+    # exclusion cannot be shown to hold: a problem, never a silent pass.
+    registry, doc = _labels_case(tmp_path)
+    problems = dataset.labels_problems(records.Labels.model_validate(doc), registry, RUBRIC.read_bytes())
+    assert problems == ["labels: fx-c2 O-T rule mapping cannot be checked without the case file"]
+    assert _problems(registry, doc, tmp_path) == []
+
+
 def test_ot_target_mapped_through_a_retired_rule_tag_is_refused(tmp_path):
     registry, doc = _labels_case(tmp_path)
     snapshot = json.loads(common.ATTACK_SNAPSHOT.read_bytes())

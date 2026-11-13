@@ -31,7 +31,7 @@ from triage.schemas import (
 )
 
 from .common import (
-    CLASSIFICATION_CODES, PASS_ID_RE, PLACEHOLDER_RE, PRODUCTION_K, REDACTION_RULES, RULE_IDS,
+    CLASSIFICATION_CODES, PASS_ID_RE, PRODUCTION_K, REDACTION_RULES, RULE_IDS,
     RUNBOOK_NAME_RE, AllowListError, DefectError, EvalModel, EvaluationError, SchemaError,
     canonical_dumps, is_case_id, is_fixture_case_id, read_regular, safe_location, severity_index,
     sha256_hex, strict_loads,
@@ -907,7 +907,12 @@ def _canonical_summary(obj: dict) -> bytes:
     return json.dumps(clean, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("ascii")
 
 
-def _strip_all_placeholders(obj: dict, items) -> dict:
+def _strip_listed_placeholders(obj: dict, items) -> dict:
+    """A copy with exactly the listed placeholders deleted, for the determinism comparison.
+
+    Only the placeholder an item names is removed. Any other placeholder-shaped
+    text (one the model wrote, say) stays, so a difference in it is still seen.
+    """
     out = copy.deepcopy(obj)
     for item in items:
         if item.rule == "withheld-digest" or FREE_TEXT_POINTER.fullmatch(item.pointer) is None:
@@ -915,7 +920,7 @@ def _strip_all_placeholders(obj: dict, items) -> dict:
         try:
             parent, key = _resolve(out, item.pointer)
             if isinstance(parent[key], str):
-                parent[key] = PLACEHOLDER_RE.sub("", parent[key])
+                parent[key] = parent[key].replace(f"<<REDACTED:{item.rule}:{item.n}>>", "")
         except (KeyError, IndexError, TypeError, ValueError):
             continue
     return out
@@ -974,12 +979,14 @@ def load_pass(pass_dir, *, registry: Registry, labels: Labels, order: Order, seq
     # Check 1: the ledger.
     ledger_class = None
     started_positions: list[int] = []
+    ended_class: dict[int, str] = {}   # position -> the class its run_end records
     try:
         entries = verify_ledger(read_regular(pass_dir / "ledger.jsonl"))
         if ledger_matches_order(entries, entries_planned):
             defect("ledger", None)
         ledger_class = entries[-1].class_
         started_positions = [e.position for e in entries if e.event == "run_start"]
+        ended_class = {e.position: e.class_ for e in entries if e.event == "run_end"}
     except EvaluationError:
         defect("ledger", None)
         started_positions = [p for p in sorted(by_position) if (pass_dir / _run_name(p, "harness.json")).exists()]
@@ -1009,10 +1016,18 @@ def load_pass(pass_dir, *, registry: Registry, labels: Labels, order: Order, seq
                 or h["role"] != planned.role or h["repeat"] != planned.repeat or h["backend"] != expected_backend):
             defect("h-binding", position)
         cls_ = h["class"]
+        # The ledger and the H record are written separately; if they disagree
+        # on how the run ended, neither can be trusted for this position.
+        if position in ended_class and ended_class[position] != cls_:
+            defect("ledger", position)
         summary_path = pass_dir / _run_name(position, "summary.json")
         audit_path = pass_dir / _run_name(position, "audit.jsonl")
         has_summary = summary_path.exists() or summary_path.is_symlink()
         has_audit = audit_path.exists() or audit_path.is_symlink()
+        # H states which output files its run left; a file added or removed
+        # afterwards makes H describe a different run.
+        if h["files"]["summary"] != has_summary or h["files"]["audit"] != has_audit:
+            defect("h-binding", position)
 
         s_obj = None
         if cls_ == "no_output" and has_summary:
@@ -1109,8 +1124,8 @@ def load_pass(pass_dir, *, registry: Registry, labels: Labels, order: Order, seq
             if a is None:
                 continue
             if public:
-                a = _strip_all_placeholders(a, [i for i in red_items if i.file == _run_name(p1, "summary.json")])
-                b = _strip_all_placeholders(b, [i for i in red_items if i.file == _run_name(p2, "summary.json")])
+                a = _strip_listed_placeholders(a, [i for i in red_items if i.file == _run_name(p1, "summary.json")])
+                b = _strip_listed_placeholders(b, [i for i in red_items if i.file == _run_name(p2, "summary.json")])
             if _canonical_summary(a) != _canonical_summary(b):
                 defect("determinism", p2)
 
