@@ -610,11 +610,39 @@ def test_scorer_imports_only_the_listed_modules():
     assert _imports(_tree("scorer.py")) <= allowed
 
 
+NETWORK_OR_PROCESS = {"socket", "http", "urllib", "requests", "subprocess", "httpx", "ftplib", "smtplib"}
+# The only exceptions, each an exact module for an exact file: the harness's
+# allow-listed helper processes and run child, and the model-identity probe.
+IMPORT_EXCEPTIONS = {"identity.py": {"subprocess"}, "harness.py": {"subprocess"}, "probe.py": {"http.client"}}
+
+
+def forbidden_imports(name, tree):
+    allowed = IMPORT_EXCEPTIONS.get(name, set())
+    return sorted(i for i in _imports(tree) if i.split(".")[0] in NETWORK_OR_PROCESS and i not in allowed)
+
+
 def test_no_evaluation_module_imports_a_network_or_process_module():
-    banned = {"socket", "http", "urllib", "requests", "subprocess", "httpx", "ftplib", "smtplib"}
     for path in sorted(EVALUATION.glob("*.py")):
-        for name in _imports(ast.parse(path.read_text(encoding="ascii"))):
-            assert name.split(".")[0] not in banned, (path.name, name)
+        assert forbidden_imports(path.name, ast.parse(path.read_text(encoding="ascii"))) == [], path.name
+
+
+@pytest.mark.parametrize("name, source, found", [
+    ("scorer.py", "import subprocess", ["subprocess"]),
+    ("records.py", "import http.client", ["http.client"]),
+    ("common.py", "from subprocess import run", ["subprocess"]),
+    ("probe.py", "import subprocess", ["subprocess"]),
+    ("probe.py", "from http import client", ["http"]),
+    ("probe.py", "import http.server", ["http.server"]),
+    ("identity.py", "import http.client", ["http.client"]),
+    ("harness.py", "import socket", ["socket"]),
+    ("evidence.py", "import subprocess", ["subprocess"]),
+    ("new_module.py", "import urllib.request", ["urllib.request"]),
+    ("identity.py", "import subprocess", []),
+    ("harness.py", "import subprocess", []),
+    ("probe.py", "import http.client", []),
+])
+def test_an_import_outside_the_exact_exceptions_is_still_rejected(name, source, found):
+    assert forbidden_imports(name, ast.parse(source)) == found
 
 
 CLI_FUNCTIONS = {"scorer.py": ("main", "_run", "_parser", "_inputs", "_pairs", "_fail"), "report.py": ("main",)}
