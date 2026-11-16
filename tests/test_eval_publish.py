@@ -868,8 +868,10 @@ def test_a_directory_swapped_after_it_is_opened_is_not_the_one_read(tmp_path, tm
     def open_then_swap(path, **kwargs):
         fd = real_fd(path, **kwargs)
         if kwargs.get("what") == "copy":
-            moved = tmp_path / "moved-original"
-            os.rename(path, moved)
+            # Rename within the same parent: moving a directory to another parent
+            # rewrites its ".." entry, which needs write permission on the read-only
+            # directory itself, so only root could do it.
+            os.rename(path, pub.root / "original.moved")
             decoy = tmp_path / "decoy"
             decoy.mkdir()
             os.symlink(decoy, path)
@@ -878,6 +880,9 @@ def test_a_directory_swapped_after_it_is_opened_is_not_the_one_read(tmp_path, tm
     try:
         with evidence.named_copy(str(pub.original), pub.pass_id, hashes, public=False,
                                  positions=range(1, 16)) as d:
+            assert os.path.islink(pub.original) and os.listdir(pub.original) == []
             assert sorted(os.listdir(d)) == sorted(hashes)
+            for name in hashes:
+                assert (Path(d) / name).read_bytes() == (pub.root / "original.moved" / name).read_bytes()
     finally:
         evidence.real_directory_fd = real_fd
