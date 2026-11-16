@@ -138,10 +138,8 @@ def test_a_pass_without_items_publishes_unchanged(tmp_path, tmp_path_factory, gl
 
 def test_refusal_1_the_original_hash_list_does_not_verify(tmp_path, tmp_path_factory, gl):
     pub = scanned(tmp_path, tmp_path_factory, gl)
-    pub.tamper("run-0002.harness.json", pub.read("run-0002.harness.json"), relist=False)
     listing = pub.root / "files.original.sha256"
-    os.chmod(listing, 0o600)
-    listing.write_bytes(listing.read_bytes().replace(b"run-0002.harness.json", b"run-0002.harness.jsom"))
+    pub.rewrite_listing(listing.read_bytes().replace(b"run-0002.harness.json", b"run-0002.harness.jsom"))
     assert_refused(pub, gl, "hash list: the file set differs")
 
 
@@ -210,7 +208,7 @@ def test_refusal_6_an_item_classified_as_an_incident(tmp_path, tmp_path_factory,
 
 def test_refusal_7_a_placeholder_the_model_wrote_itself(tmp_path, tmp_path_factory, gl):
     pub = scanned(tmp_path, tmp_path_factory, gl, {2: steps("Already <<REDACTED:ipv4:1>> here")})
-    assert_refused(pub, gl, "closure: run-0002.summary.json holds a placeholder at no listed pointer")
+    assert_refused(pub, gl, "closure: run-0002.summary.json /next_steps/0/step placeholders differ from the listed items")
 
 
 def test_refusal_7_the_scanners_report_on_the_public_copy(tmp_path, tmp_path_factory, gl):
@@ -631,3 +629,255 @@ def test_positive_control_with_the_real_binary(tmp_path, tmp_path_factory):
         assert evidence.gitleaks_findings(binary, str(work), config) >= 1, name
         target.write_bytes(data + f"{dbl.private_ipv4()}\n".encode())
         assert evidence.h2_problems(name, target.read_bytes()), name
+
+
+# --- Completed-original modes and ownership ---------------------------------------------------------
+
+def _set_mode(pub, name, mode):
+    """Change one mode on purpose (name None means original/ itself, "list" the hash list)."""
+    if name is None:
+        os.chmod(pub.original, mode)
+    elif name == "list":
+        os.chmod(pub.root / "files.original.sha256", mode)
+    else:
+        os.chmod(pub.original / name, mode)
+
+
+MODE_CHANGES = [
+    ("run-0002.harness.json", 0o444, "originals: run-0002.harness.json mode changed"),
+    ("run-0002.harness.json", 0o600, "originals: run-0002.harness.json mode changed"),
+    ("ledger.jsonl", 0o644, "originals: ledger.jsonl mode changed"),
+    (None, 0o700, "originals: original/ mode changed"),
+    (None, 0o755, "originals: original/ mode changed"),
+    ("list", 0o644, "originals: the hash list mode changed"),
+]
+
+
+@pytest.mark.parametrize("name, mode, message", MODE_CHANGES)
+def test_a_changed_original_mode_refuses_the_scan(tmp_path, tmp_path_factory, gl, name, mode, message):
+    pub = setup(tmp_path, tmp_path_factory)
+    _set_mode(pub, name, mode)
+    with pytest.raises(evidence.PublishRefused, match=re.escape(message)):
+        scan(pub, gl)
+    assert not (pub.root / "scan").exists()
+
+
+@pytest.mark.parametrize("name, mode, message", MODE_CHANGES)
+def test_a_changed_original_mode_refuses_the_build_and_the_verification(tmp_path, tmp_path_factory, gl, name,
+                                                                         mode, message):
+    pub = scanned(tmp_path, tmp_path_factory, gl)
+    _set_mode(pub, name, mode)
+    assert_refused(pub, gl, message)
+    with pytest.raises(evidence.PublishRefused, match=re.escape(message)):
+        publish.run_verify(str(pub.clone.path), paths(pub), originals_hash(pub))
+
+
+def test_a_mode_changed_during_the_build_refuses(tmp_path, tmp_path_factory, gl, monkeypatch):
+    pub = scanned(tmp_path, tmp_path_factory, gl)
+    real = publish._score_records
+    calls = {"n": 0}
+
+    def change_between(*args, **kwargs):
+        calls["n"] += 1
+        out = real(*args, **kwargs)
+        if calls["n"] == 2:
+            _set_mode(pub, "run-0002.harness.json", 0o444)
+        return out
+    monkeypatch.setattr(publish, "_score_records", change_between)
+    assert_refused(pub, gl, "originals: run-0002.harness.json mode changed")
+
+
+def test_the_tamper_helper_keeps_a_mode_set_on_purpose(tmp_path, tmp_path_factory):
+    pub = setup(tmp_path, tmp_path_factory)
+    _set_mode(pub, "run-0002.harness.json", 0o444)
+    pub.tamper("run-0002.harness.json", pub.read("run-0002.harness.json"))
+    assert stat.S_IMODE(os.stat(pub.original / "run-0002.harness.json").st_mode) == 0o444
+    assert stat.S_IMODE(os.stat(pub.original).st_mode) == 0o500
+
+
+def test_unchanged_modes_pass_and_the_store_layout_is_checked_from_the_store(tmp_path, tmp_path_factory, gl):
+    pub = setup(tmp_path, tmp_path_factory)
+    publish.verify_originals(paths(pub))
+    os.chmod(pub.root, 0o750)
+    with pytest.raises(evidence.PublishRefused, match="pass directory: must not be group- or other-accessible"):
+        publish.verify_originals(paths(pub))
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs files owned by another user")
+@pytest.mark.parametrize("target", ["file", "directory", "list"])
+def test_another_users_originals_refuse(tmp_path, tmp_path_factory, target):
+    pub = setup(tmp_path, tmp_path_factory)
+    path = {"file": pub.original / "run-0002.harness.json", "directory": pub.original,
+            "list": pub.root / "files.original.sha256"}[target]
+    os.chown(path, 12345, 12345)
+    with pytest.raises(evidence.PublishRefused):
+        publish.verify_originals(paths(pub))
+
+
+# --- Placeholders are bound to items in every public file ----------------------------------------------
+
+@pytest.fixture
+def closure_case(tmp_path, tmp_path_factory, gl):
+    """The worked example with public.tmp/ written, for direct closure checks."""
+    pub = scanned(tmp_path, tmp_path_factory, gl, worked_example())
+    p = paths(pub)
+    items, private = evidence.scan(p.original)
+    _, cls = records.load_scan((pub.root / "scan" / "items.json").read_bytes(),
+                               (pub.root / "classification.json").read_bytes())
+    red = publish._write_public_tmp(p, items, private, cls)
+    return pub, p, red
+
+
+def _edit_line(path, number, edit):
+    lines = path.read_bytes().split(b"\n")
+    obj = json.loads(lines[number - 1])
+    edit(obj)
+    lines[number - 1] = canonical_dumps(obj)[:-1]
+    path.write_bytes(b"\n".join(lines))
+
+
+def _both(pub, p, name, edit):
+    """The same edit in the original (as text the CLI could have written) and in the public copy."""
+    os.chmod(pub.original, 0o700)
+    os.chmod(pub.original / name, 0o600)
+    for directory in (pub.original, Path(p.public_tmp)):
+        edit(directory / name)
+
+
+@pytest.mark.parametrize("name, line", [(f"run-{TWIN:04d}.audit.jsonl", 1), ("run-0002.audit.jsonl", 1)])
+def test_an_unlisted_placeholder_in_an_audit_line_is_a_closure_problem(closure_case, name, line):
+    pub, p, red = closure_case
+    _both(pub, p, name, lambda f: _edit_line(f, line, lambda o: o.__setitem__("triage.alert.id",
+                                                                           "<<REDACTED:ipv4:99>>")))
+    assert f"closure: {name} L{line}/triage.alert.id placeholders differ from the listed items" in \
+        evidence._structural_problems(p.public_tmp, red, p.original)
+
+
+def test_an_unlisted_placeholder_in_an_h_record_is_a_closure_problem(closure_case):
+    pub, p, red = closure_case
+    name = "run-0002.harness.json"
+
+    def edit(f):
+        obj = json.loads(f.read_bytes())
+        obj["cli_message"] = "<<REDACTED:ipv4:1>>"
+        f.write_bytes(canonical_dumps(obj))
+    _both(pub, p, name, edit)
+    assert f"closure: {name} /cli_message placeholders differ from the listed items" in \
+        evidence._structural_problems(p.public_tmp, red, p.original)
+
+
+@pytest.mark.parametrize("change", ["duplicate", "missing", "extra-other", "key"])
+def test_placeholders_at_a_listed_pointer_must_match_the_items_exactly(closure_case, change):
+    pub, p, red = closure_case
+    name = f"run-{TWIN:04d}.summary.json"
+    path = Path(p.public_tmp) / name
+    obj = json.loads(path.read_bytes())
+    step = obj["next_steps"][1]["step"]
+    if change == "duplicate":
+        obj["next_steps"][1]["step"] = step + " <<REDACTED:ipv4:1>>"
+    elif change == "missing":
+        obj["next_steps"][1]["step"] = step.replace("<<REDACTED:ipv4:1>>", "")
+    elif change == "extra-other":
+        obj["next_steps"][1]["step"] = step + " <<REDACTED:email:7>>"
+    else:
+        obj["<<REDACTED:ipv4:1>>"] = 1
+    path.write_bytes(canonical_dumps(obj))
+    problems = evidence._structural_problems(p.public_tmp, red, p.original)
+    if change == "key":
+        assert f"closure: {name} holds a placeholder in an object key" in problems
+    else:
+        assert f"closure: {name} /next_steps/1/step placeholders differ from the listed items" in problems
+
+
+def test_the_exact_placeholder_binding_passes_for_the_worked_example(closure_case):
+    pub, p, red = closure_case
+    assert evidence._structural_problems(p.public_tmp, red, p.original) == []
+
+
+def test_a_build_with_an_unlisted_audit_placeholder_refuses(tmp_path, tmp_path_factory, gl):
+    pub = setup(tmp_path, tmp_path_factory, worked_example())
+    name = f"run-{TWIN:04d}.audit.jsonl"
+    lines = pub.read(name).split(b"\n")
+    obj = json.loads(lines[0])
+    obj["triage.alert.id"] = "<<REDACTED:ipv4:99>>"
+    pub.tamper(name, b"\n".join([canonical_dumps(obj)[:-1]] + lines[1:]))
+    scan(pub, gl)
+    dbl.classify_all(pub)
+    assert_refused(pub, gl, f"closure: {name} L1/triage.alert.id placeholders differ from the listed items")
+
+
+# --- Symlinked directories ----------------------------------------------------------------------------------
+
+def _replace_with_symlink(directory: Path, elsewhere: Path) -> None:
+    shutil.copytree(directory, elsewhere, symlinks=True)
+    for root, dirs, files in os.walk(directory):
+        os.chmod(root, 0o700)
+    shutil.rmtree(directory)
+    os.symlink(elsewhere, directory)
+
+
+def test_a_symlinked_original_directory_is_refused_by_the_copy(tmp_path, tmp_path_factory, monkeypatch):
+    pub = setup(tmp_path, tmp_path_factory)
+    hashes = evidence.parse_hash_list((pub.root / "files.original.sha256").read_bytes())
+    _replace_with_symlink(pub.original, tmp_path / "elsewhere")
+    created = []
+    real_mkdtemp = evidence.tempfile.mkdtemp
+    monkeypatch.setattr(evidence.tempfile, "mkdtemp", lambda **k: created.append(real_mkdtemp(**k)) or created[-1])
+    with pytest.raises(evidence.PublishRefused, match="copy: not a real directory"):
+        with evidence.named_copy(str(pub.original), pub.pass_id, hashes, public=False, positions=range(1, 16)):
+            pass
+    assert created == []
+
+
+def test_a_symlinked_public_tmp_directory_is_refused_by_the_copy(closure_case, tmp_path):
+    pub, p, red = closure_case
+    hashes = evidence.file_hashes(p.public_tmp)
+    _replace_with_symlink(Path(p.public_tmp), tmp_path / "elsewhere-public")
+    with pytest.raises(evidence.PublishRefused, match="copy: not a real directory"):
+        with evidence.named_copy(p.public_tmp, pub.pass_id, hashes, public=True, positions=range(1, 16)):
+            pass
+
+
+@pytest.mark.parametrize("tool", ["scan", "build", "verify"])
+def test_a_symlinked_original_directory_is_refused_by_every_tool(tmp_path, tmp_path_factory, gl, tool):
+    pub = scanned(tmp_path, tmp_path_factory, gl) if tool != "scan" else setup(tmp_path, tmp_path_factory)
+    _replace_with_symlink(pub.original, tmp_path / "elsewhere")
+    os.chmod(tmp_path / "elsewhere", 0o500)
+    with pytest.raises(evidence.PublishRefused, match="originals: not a real directory"):
+        {"scan": lambda: scan(pub, gl), "build": lambda: build(pub, gl),
+         "verify": lambda: publish.run_verify(str(pub.clone.path), paths(pub), originals_hash(pub))}[tool]()
+
+
+@pytest.mark.parametrize("tool", ["scan", "build", "verify"])
+def test_a_symlinked_pass_directory_is_refused_by_every_tool(tmp_path, tmp_path_factory, gl, tool):
+    pub = scanned(tmp_path, tmp_path_factory, gl) if tool != "scan" else setup(tmp_path, tmp_path_factory)
+    elsewhere = tmp_path / "elsewhere-pass"
+    os.rename(pub.root, elsewhere)
+    os.symlink(elsewhere, pub.root)
+    with pytest.raises(evidence.PublishRefused, match="pass directory: not a real directory"):
+        {"scan": lambda: scan(pub, gl), "build": lambda: build(pub, gl),
+         "verify": lambda: publish.run_verify(str(pub.clone.path), paths(pub), originals_hash(pub))}[tool]()
+
+
+def test_a_directory_swapped_after_it_is_opened_is_not_the_one_read(tmp_path, tmp_path_factory):
+    # The copy reads through the descriptor it checked: replacing the path afterwards changes nothing it reads.
+    pub = setup(tmp_path, tmp_path_factory)
+    hashes = evidence.parse_hash_list((pub.root / "files.original.sha256").read_bytes())
+    real_fd = evidence.real_directory_fd
+
+    def open_then_swap(path, **kwargs):
+        fd = real_fd(path, **kwargs)
+        if kwargs.get("what") == "copy":
+            moved = tmp_path / "moved-original"
+            os.rename(path, moved)
+            decoy = tmp_path / "decoy"
+            decoy.mkdir()
+            os.symlink(decoy, path)
+        return fd
+    evidence.real_directory_fd = open_then_swap
+    try:
+        with evidence.named_copy(str(pub.original), pub.pass_id, hashes, public=False,
+                                 positions=range(1, 16)) as d:
+            assert sorted(os.listdir(d)) == sorted(hashes)
+    finally:
+        evidence.real_directory_fd = real_fd

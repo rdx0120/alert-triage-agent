@@ -23,6 +23,7 @@ if __name__ == "__main__":
 import os
 import re
 import shutil
+import stat
 import sys
 
 from triage import files as tfiles
@@ -43,6 +44,7 @@ class Paths:
     def __init__(self, store: str, pass_id: str) -> None:
         if records.PASS_ID_RE.fullmatch(pass_id) is None:
             raise identity.UsageRefused("invalid pass ID")
+        self.store = store
         self.pass_id = pass_id
         self.sequence = pass_id.split("-")[0]
         self.root = os.path.join(store, pass_id)
@@ -70,20 +72,58 @@ def frozen_inputs(clone: str):
     return registry, labels, order
 
 
-def verify_originals(paths: Paths) -> dict[str, str]:
-    """The original hash list verifies and the ledger chain holds. Returns the verified hashes."""
+def pass_directory_fd(paths: Paths) -> int:
+    """The pass directory, opened from the store without following a symlink at either level."""
+    store_fd = evidence.real_directory_fd(paths.store, what="store")
     try:
-        data = read_regular(paths.hash_list)
-    except EvaluationError:
-        raise PublishRefused("originals: the hash list cannot be read") from None
-    problems = evidence.hash_list_problems(paths.original, data)
+        fd = evidence.real_directory_fd(paths.pass_id, what="pass directory", dir_fd=store_fd)
+    finally:
+        os.close(store_fd)
+    if stat.S_IMODE(os.fstat(fd).st_mode) & 0o077:
+        os.close(fd)
+        raise PublishRefused("pass directory: must not be group- or other-accessible")
+    return fd
+
+
+def check_original_modes(paths: Paths) -> None:
+    """The completed originals keep the runner's modes (0500, 0400) and this user's ownership."""
+    fd = pass_directory_fd(paths)
+    try:
+        problems = evidence.original_mode_problems(fd)
+    finally:
+        os.close(fd)
     if problems:
         raise PublishRefused(problems[0])
+
+
+def verify_original_hashes(paths: Paths) -> dict[str, str]:
+    """The original hash list verifies and the ledger chain holds, read through directory descriptors."""
+    pass_fd = pass_directory_fd(paths)
     try:
-        records.verify_ledger(read_regular(os.path.join(paths.original, "ledger.jsonl")))
-    except EvaluationError:
-        raise PublishRefused("originals: the ledger chain does not verify") from None
+        try:
+            data = evidence.read_in(pass_fd, "files.original.sha256")
+        except EvaluationError:
+            raise PublishRefused("originals: the hash list cannot be read") from None
+        orig_fd = evidence.real_directory_fd("original", what="originals", dir_fd=pass_fd)
+        try:
+            problems = evidence.hash_list_problems(orig_fd, data)
+            if problems:
+                raise PublishRefused(problems[0])
+            try:
+                records.verify_ledger(evidence.read_in(orig_fd, "ledger.jsonl"))
+            except EvaluationError:
+                raise PublishRefused("originals: the ledger chain does not verify") from None
+        finally:
+            os.close(orig_fd)
+    finally:
+        os.close(pass_fd)
     return evidence.parse_hash_list(data)
+
+
+def verify_originals(paths: Paths) -> dict[str, str]:
+    """Modes and ownership, then the hash list and the ledger. Returns the verified hashes."""
+    check_original_modes(paths)
+    return verify_original_hashes(paths)
 
 
 def _positions(order, sequence: str) -> list[int]:

@@ -15,6 +15,7 @@ rules the tree is checked with.
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import copy
 import importlib.util
@@ -57,25 +58,90 @@ class PublishRefused(EvaluationError):
     """Publication stops: nothing public is written."""
 
 
+# --- Descriptor-anchored directories ----------------------------------------------------
+# A directory is opened once, with O_NOFOLLOW and O_DIRECTORY, and checked with
+# fstat on that descriptor; every file in it is then listed, examined and read
+# through the same descriptor. A symlinked directory is refused, and one swapped
+# after the check is never the one that is read.
+
+def real_directory_fd(path, *, what: str, dir_fd: int | None = None) -> int:
+    """A descriptor for path: a real directory (never a symlink) owned by the effective user."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        fd = os.open(path, flags, dir_fd=dir_fd)
+    except OSError:
+        raise PublishRefused(f"{what}: not a real directory") from None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid():
+            raise PublishRefused(f"{what}: not a real directory owned by this user")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+@contextlib.contextmanager
+def opened_directory(directory, *, what: str):
+    """Use an int as a descriptor already checked by the caller; open and check a path."""
+    if isinstance(directory, int):
+        yield directory
+        return
+    fd = real_directory_fd(directory, what=what)
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def read_in(dir_fd: int, name: str) -> bytes:
+    """Read a regular file in an open directory without following a symlink."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
+    except OSError:
+        raise EvaluationError("cannot open a regular file") from None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise EvaluationError("not a regular file")
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
 # --- File rules and hash lists --------------------------------------------------------
 
-def ledger_positions(directory: str) -> list[int] | None:
+def ledger_positions(directory) -> list[int] | None:
     """Positions with a run_start entry, or None when the ledger cannot be read as a chain."""
     try:
-        entries = records.verify_ledger(read_regular(os.path.join(directory, "ledger.jsonl")))
+        with opened_directory(directory, what="files") as fd:
+            entries = records.verify_ledger(read_in(fd, "ledger.jsonl"))
     except EvaluationError:
         return None
     return [e.position for e in entries if e.event == "run_start"]
 
 
-def file_problems(directory: str, order_positions, *, public: bool) -> list[str]:
+def file_problems(directory, order_positions, *, public: bool) -> list[str]:
     """Design's file rules: only regular, non-empty, UTF-8 files with fixed names; required files present."""
+    try:
+        with opened_directory(directory, what="files") as fd:
+            return _file_problems(fd, order_positions, public=public)
+    except PublishRefused as error:
+        return [str(error)]
+
+
+def _file_problems(dir_fd: int, order_positions, *, public: bool) -> list[str]:
     problems = []
     allowed_extra = PUBLIC_EXTRA if public else ()
     positions = set(order_positions)
     names = []
     try:
-        entries = list(os.scandir(directory))
+        entries = list(os.scandir(dir_fd))
     except OSError:
         return ["files: the directory cannot be read"]
     for entry in entries:
@@ -97,7 +163,7 @@ def file_problems(directory: str, order_positions, *, public: bool) -> list[str]
             problems.append(f"files: {name} is not a position of the order")
             continue
         try:
-            data = read_regular(entry.path)
+            data = read_in(dir_fd, name)
         except EvaluationError:
             problems.append(f"files: {name} cannot be read")
             continue
@@ -111,7 +177,7 @@ def file_problems(directory: str, order_positions, *, public: bool) -> list[str]
     for required in ("environment.json", "ledger.jsonl") + (("redactions.json",) if public else ()):
         if required not in names:
             problems.append(f"files: {required} is missing")
-    started = ledger_positions(directory) if "ledger.jsonl" in names else None
+    started = ledger_positions(dir_fd) if "ledger.jsonl" in names else None
     if started is not None:
         for position in started:
             if f"run-{position:04d}.harness.json" not in names:
@@ -123,19 +189,19 @@ def _safe(name: str) -> str:
     return name if records.PASS_FILE_RE.fullmatch(name) or name in PUBLIC_EXTRA else "an entry"
 
 
-def file_hashes(directory: str, exclude=()) -> dict[str, str]:
+def file_hashes(directory, exclude=()) -> dict[str, str]:
     out = {}
-    for name in sorted(os.listdir(directory)):
-        if name in exclude:
-            continue
-        path = os.path.join(directory, name)
-        if stat.S_ISLNK(os.lstat(path).st_mode):
-            raise PublishRefused(f"files: {_safe(name)} is a symlink")
-        out[name] = sha256_hex(read_regular(path))
+    with opened_directory(directory, what="files") as fd:
+        for name in sorted(os.listdir(fd)):
+            if name in exclude:
+                continue
+            if stat.S_ISLNK(os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode):
+                raise PublishRefused(f"files: {_safe(name)} is a symlink")
+            out[name] = sha256_hex(read_in(fd, name))
     return out
 
 
-def hash_list(directory: str, exclude=()) -> bytes:
+def hash_list(directory, exclude=()) -> bytes:
     return "".join(f"{h}  {n}\n" for n, h in file_hashes(directory, exclude).items()).encode("ascii")
 
 
@@ -159,7 +225,7 @@ def parse_hash_list(data: bytes) -> dict[str, str]:
     return out
 
 
-def hash_list_problems(directory: str, data: bytes, exclude=()) -> list[str]:
+def hash_list_problems(directory, data: bytes, exclude=()) -> list[str]:
     """The list must cover exactly the directory's files, each with its current hash."""
     try:
         listed = parse_hash_list(data)
@@ -169,6 +235,45 @@ def hash_list_problems(directory: str, data: bytes, exclude=()) -> list[str]:
     if set(listed) != set(observed):
         return ["hash list: the file set differs"]
     return [f"hash list: {name} differs" for name in sorted(listed) if listed[name] != observed[name]]
+
+
+# --- Completed originals: modes and ownership ----------------------------------------------
+# The runner sets these modes with fchmod when the pass ends, so they are exact
+# whatever the umask. Permissions do not stop the owning user; a changed mode is
+# still evidence that someone touched the originals, so it refuses.
+
+ORIGINAL_DIR_MODE = 0o500
+ORIGINAL_FILE_MODE = 0o400
+
+
+def original_mode_problems(pass_fd: int) -> list[str]:
+    """original/ is 0500, every file in it and the hash list are 0400, all owned by this user."""
+    problems = []
+    me = os.geteuid()
+    try:
+        orig_fd = real_directory_fd("original", what="originals", dir_fd=pass_fd)
+    except PublishRefused as error:
+        return [str(error)]
+    try:
+        if stat.S_IMODE(os.fstat(orig_fd).st_mode) != ORIGINAL_DIR_MODE:
+            problems.append("originals: original/ mode changed")
+        for name in sorted(os.listdir(orig_fd)):
+            st = os.stat(name, dir_fd=orig_fd, follow_symlinks=False)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != me:
+                problems.append(f"originals: {_safe(name)} is not a regular file owned by this user")
+            elif stat.S_IMODE(st.st_mode) != ORIGINAL_FILE_MODE:
+                problems.append(f"originals: {_safe(name)} mode changed")
+    finally:
+        os.close(orig_fd)
+    try:
+        st = os.stat("files.original.sha256", dir_fd=pass_fd, follow_symlinks=False)
+    except OSError:
+        return problems + ["originals: the hash list is missing"]
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != me:
+        problems.append("originals: the hash list is not a regular file owned by this user")
+    elif stat.S_IMODE(st.st_mode) != ORIGINAL_FILE_MODE:
+        problems.append("originals: the hash list mode changed")
+    return problems
 
 
 # --- The verified named copy ------------------------------------------------------------------
@@ -184,10 +289,18 @@ def named_copy(source_dir: str, pass_id: str, hashes: dict[str, str], *, public:
     so the scorer reads the same bytes the hash lists cover. The copy is
     removed afterwards; a failure to remove it is reported.
     """
-    problems = file_problems(source_dir, positions, public=public)
+    src_fd = real_directory_fd(source_dir, what="copy")
+    try:
+        yield from _named_copy(src_fd, pass_id, hashes, public=public, positions=positions)
+    finally:
+        os.close(src_fd)
+
+
+def _named_copy(src_fd: int, pass_id: str, hashes: dict[str, str], *, public: bool, positions):
+    problems = file_problems(src_fd, positions, public=public)
     if problems:
         raise PublishRefused(problems[0])
-    names = sorted(n for n in os.listdir(source_dir) if n != "files.sha256")
+    names = sorted(n for n in os.listdir(src_fd) if n != "files.sha256")
     if set(names) != set(hashes) - {"files.sha256"}:
         raise PublishRefused("copy: the file set differs from the verified hashes")
     tmp = tempfile.mkdtemp(prefix="eval-copy-")
@@ -197,7 +310,7 @@ def named_copy(source_dir: str, pass_id: str, hashes: dict[str, str], *, public:
         fd = tfiles.open_private_dir(target, what="copy", create=True)
         try:
             for name in names:
-                data = read_regular(os.path.join(source_dir, name))
+                data = read_in(src_fd, name)
                 if sha256_hex(data) != hashes[name]:
                     raise PublishRefused(f"copy: {name} differs from its verified hash")
                 write_in(fd, target, [(name, data)], what="copy")
@@ -518,16 +631,56 @@ def _diff(a, b, pointer: str, out: list[str]) -> None:
         out.append(pointer)
 
 
+def _escape(key: str) -> str:
+    return key.replace("~", "~0").replace("/", "~1")
+
+
 def _strings(obj, pointer: str = ""):
+    """Every string as (kind, pointer, value); kind is "value" or "key", so a key never shares a pointer."""
     if isinstance(obj, str):
-        yield pointer, obj
+        yield "value", pointer, obj
     elif isinstance(obj, dict):
         for key, value in obj.items():
-            yield f"{pointer}/key", key
-            yield from _strings(value, f"{pointer}/{key.replace('~', '~0').replace('/', '~1')}")
+            yield "key", f"{pointer}/{_escape(key)}", key
+            yield from _strings(value, f"{pointer}/{_escape(key)}")
     elif isinstance(obj, list):
         for i, value in enumerate(obj):
             yield from _strings(value, f"{pointer}/{i}")
+
+
+def _documents(name: str, data: bytes):
+    """(pointer prefix, parsed document) for a JSON file, or for each line of a JSONL file."""
+    if name.endswith(".jsonl"):
+        return [(f"L{n}", strict_loads(line)) for n, line in enumerate(data.split(b"\n")[:-1], start=1)]
+    return [("", strict_loads(data))]
+
+
+def _placeholder_problems(name: str, data: bytes, file_items: list[dict]) -> list[str]:
+    """Every placeholder occurrence is bound to exactly one listed item at its pointer, and vice versa.
+
+    Counts, not sets: two occurrences of the same placeholder at a pointer with
+    one item refuse, and so does a placeholder in an object key or in any file
+    or line that has no listed item (a withheld digest lists no placeholder).
+    """
+    problems = []
+    expected: dict[str, collections.Counter] = {}
+    for item in file_items:
+        if item["rule"] in RULE_IDS:
+            expected.setdefault(item["pointer"], collections.Counter())[(item["rule"], item["n"])] += 1
+    seen = set()
+    for prefix, doc in _documents(name, data):
+        for kind, pointer, value in _strings(doc, prefix):
+            found = collections.Counter((m.group(1), int(m.group(2))) for m in PLACEHOLDER_RE.finditer(value))
+            if kind == "key":
+                if found:
+                    problems.append(f"closure: {name} holds a placeholder in an object key")
+                continue
+            seen.add(pointer)
+            if found != expected.get(pointer, collections.Counter()):
+                problems.append(f"closure: {name} {pointer} placeholders differ from the listed items")
+    for pointer in sorted(set(expected) - seen):
+        problems.append(f"closure: {name} {pointer} is not a string")
+    return problems
 
 
 def _structural_problems(public_dir: str, items: list[dict], original_dir: str) -> list[str]:
@@ -545,14 +698,11 @@ def _structural_problems(public_dir: str, items: list[dict], original_dir: str) 
             continue
         original = read_regular(original_path)
         file_items = by_file.get(name, [])
+        # Every public file, with or without items, JSON or JSONL.
+        problems += _placeholder_problems(name, public, file_items)
         if not file_items:
             if public != original:
                 problems.append(f"closure: {name} differs from its original without a listed item")
-            # A placeholder-shaped string the model wrote itself sits at no listed pointer.
-            for line in public.split(b"\n"):
-                if line.strip() and any(PLACEHOLDER_RE.search(v) for _, v in _strings(strict_loads(line))):
-                    problems.append(f"closure: {name} holds a placeholder at no listed pointer")
-                    break
             continue
         listed = {i["pointer"] for i in file_items}
         if name.endswith(".jsonl"):
@@ -577,14 +727,6 @@ def _structural_problems(public_dir: str, items: list[dict], original_dir: str) 
         _diff(o_obj, p_obj, "", diffs)
         if any(d not in listed for d in diffs):
             problems.append(f"closure: {name} changed outside the listed pointers")
-        for pointer, value in _strings(p_obj):
-            found = [(m.group(1), int(m.group(2))) for m in PLACEHOLDER_RE.finditer(value)]
-            expected = sorted((i["rule"], i["n"]) for i in file_items if i["pointer"] == pointer)
-            if sorted(found) != expected:
-                problems.append(f"closure: {name} {pointer} placeholders differ from the listed items")
-        for pointer in listed:
-            if not any(pointer == p for p, _ in _strings(p_obj)):
-                problems.append(f"closure: {name} {pointer} is not a string")
     return problems
 
 

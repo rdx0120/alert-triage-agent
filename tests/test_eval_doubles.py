@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -229,18 +230,33 @@ class Published:
         return self.root / "original"
 
     def tamper(self, name: str, data: bytes, *, relist: bool = True) -> None:
-        """Replace an original (and, unless told not to, its hash-list line), as an attacker with write access could."""
-        os.chmod(self.original, 0o700)
+        """Replace an original (and, unless told not to, its hash-list line), as an attacker with write access could.
+
+        The modes in force before the edit are put back afterwards (a new file
+        gets the completed-original 0400), so the edit itself changes no mode,
+        and a mode a test changed on purpose is never hidden.
+        """
+        dir_mode = stat.S_IMODE(os.stat(self.original).st_mode)
         target = self.original / name
-        if target.exists():
+        existed = target.exists()
+        file_mode = stat.S_IMODE(os.stat(target).st_mode) if existed else 0o400
+        os.chmod(self.original, 0o700)
+        if existed:
             os.chmod(target, 0o600)
         target.write_bytes(data)
+        os.chmod(target, file_mode)
+        os.chmod(self.original, dir_mode)
         if relist:
             from evaluation import evidence
-            listing = self.root / "files.original.sha256"
-            os.chmod(listing, 0o600)
-            listing.write_bytes(evidence.hash_list(str(self.original)))
-            os.chmod(listing, 0o400)
+            self.rewrite_listing(evidence.hash_list(str(self.original)))
+
+    def rewrite_listing(self, data: bytes) -> None:
+        """Replace files.original.sha256, keeping its mode."""
+        listing = self.root / "files.original.sha256"
+        mode = stat.S_IMODE(os.stat(listing).st_mode)
+        os.chmod(listing, 0o600)
+        listing.write_bytes(data)
+        os.chmod(listing, mode)
 
     def read(self, name: str) -> bytes:
         return (self.original / name).read_bytes()
