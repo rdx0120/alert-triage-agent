@@ -1020,3 +1020,45 @@ them must also be fixed first, and bound to the labels.
   and a non-substantive one must leave the fixture outputs byte-identical.
 - **Designer-written labels** remain a stated limitation.
 - **Each new fixture file** also changes `provenance.json`.
+
+**Decision, producer side (added with the evaluation harness).**
+- **One run, one fresh process.** The harness runs the unchanged
+  command-line triage once per run, in a new process whose environment is
+  built from nothing, through a small wrapper that only records which
+  runbooks the enrichment step returned. Every child gets the model
+  endpoint as a loopback literal; any other endpoint refuses the pass.
+- **Identity before every run.** Before each run, and again at the end of
+  the pass, the harness checks that the tracked files equal the frozen
+  manifest, that the commit and tree are the recorded ones, that the
+  working tree is clean, that the complete installed-package list is
+  unchanged, and, for model passes, that the model server and its service
+  configuration are the frozen ones. A first-check failure leaves the pass
+  incomplete; a later code mismatch voids it.
+- **Execution identity is published in clear, or not at all.** Package
+  lines, service environment entries and the server command must match
+  fixed shapes and an allow-list of names. A value that does not match is
+  refused, never rewritten, so no private path, URL credential or unlisted
+  setting can be frozen or published.
+- **Evidence is append-only and verified.** A hash-chained ledger records
+  each run before it starts and its class when it ends. Outputs are moved,
+  never rewritten, and made read-only. A hash list of the originals is
+  written last, and the owner records its hash privately.
+- **Publication is all or nothing.** A public copy is built only when both
+  scanners pass. Flagged spans are replaced by numbered placeholders only
+  inside the four free-text summary fields; a flag anywhere else, or any
+  secret-scanner finding, stops publication. Request and reply digests and
+  sizes are withheld for runs that needed a redaction. The build refuses
+  when a redaction would touch an injection marker, or when the score
+  records from the public and original copies differ in any byte.
+
+**Consequences, producer side.**
+- The model server must run as a service whose configuration can be read,
+  with no environment file, and every Python package must come from the
+  package index or from the project itself.
+- A legitimate setting outside the allow-list blocks freezing until a
+  reviewed change: availability is traded for integrity.
+- The checks detect drift; they cannot stop someone with write access to
+  the evaluation host. The owner's independent record of the commit, the
+  tree and the original hash list remains the control.
+- There is no operating-system network isolation. The loopback check is
+  configuration enforcement only.
