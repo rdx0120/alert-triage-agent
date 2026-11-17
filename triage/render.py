@@ -32,7 +32,7 @@ MAX_RENDER_ANOMALIES = len(get_args(Anomaly))
 MAX_RENDER_SIGNALS = len(get_args(InjectionSignal))
 MAX_RENDER_DISPLAY_CHARS = 256   # technique name, asset host and owner; the longest in local data is 54
 # Backstop on the result. The largest summary within the limits renders to
-# 181,999 bytes (asserted in tests/test_render.py), so only a template change
+# 182,503 bytes (asserted in tests/test_render.py), so only a template change
 # can reach this.
 MAX_MARKDOWN_BYTES = 196_608
 

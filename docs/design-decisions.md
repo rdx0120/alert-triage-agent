@@ -1062,3 +1062,40 @@ them must also be fixed first, and bound to the labels.
   tree and the original hash list remains the control.
 - There is no operating-system network isolation. The loopback check is
   configuration enforcement only.
+
+---
+
+## DD-030: Model text that reaches its length limit is marked, never cut further
+
+**Context.** The Ollama backend sends the draft's JSON schema as the output
+format, and Ollama enforces its string limits while generating: 600
+characters for the severity rationale, 300 for a step or containment action,
+200 for a missing-data description. A string that reaches its limit is closed
+there and is valid JSON, so it passed validation and appeared complete even
+when it stopped mid-sentence. The test of those limits says over-long text
+is rejected; under constrained generation it is cut instead, silently. The
+code cannot tell a cut string from one the model happened to end at exactly
+the limit: in both cases the next token is the closing quote, and no
+per-token detail is returned.
+
+**Decision.** The limits the model generates under are unchanged. When a
+draft string's raw length equals its limit, the guardrails append the fixed
+marker ` [length limit]` to the cleaned text; every character the model
+wrote is kept. The marker means "reached the length limit", not "truncated".
+The four summary fields accept at most one trailing marker beyond the
+original limit, and the text before it must stay within that limit, for every
+reader of a summary, not only the guardrails. The marker is allowed only on
+model text: a rule or tripwire rationale and an enrichment gap refuse it.
+
+Rejected: lowering the generation limits to leave room for the marker (it
+changes what the model generates, both the last characters of a cut string
+and everything generated after it); replacing the last characters with a
+marker (it deletes model text); dropping the limits from the output format
+(an over-long string then fails validation and loses the whole draft); a
+separate flag field (a new key in the summary).
+
+**Consequences.** A reader sees when model text reached its limit. A summary
+read from anywhere is held to the original limit for unmarked text. A model
+can write the marker itself; that produces a false label at most, never
+longer text. The largest valid summary renders to 182,503 bytes, still under
+the renderer's backstop.

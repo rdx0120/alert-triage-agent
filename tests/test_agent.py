@@ -200,6 +200,12 @@ def test_single_call_mode(settings, tools):
     assert request.citable is not None
     assert request.response_schema == generator_schema(request.citable)
     assert [c.phase for c in result.model_calls] == ["final"]
+    # The model's generation limits stay the draft's; only the summary admits
+    # the length-limit marker (DD-030).
+    defs = request.response_schema["$defs"]
+    assert [defs[m]["properties"][f]["maxLength"] for m, f in [
+        ("DraftSeverity", "rationale"), ("DraftStep", "step"), ("DraftContainment", "action"),
+        ("DraftMissing", "description")]] == [600, 300, 300, 200]
 
 
 def test_model_lookup_origin_and_repeats(settings, tools):

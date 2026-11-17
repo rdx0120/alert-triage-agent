@@ -11,10 +11,13 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from triage.agent import run_agent
 from triage.backends import BackendError, ChatReply, HeuristicBackend, ToolCall
 from triage.config import REPO_ROOT, Settings
-from triage.guardrails import NO_DRAFT_RATIONALE, RAISED_RATIONALE, TRIPWIRE_RATIONALE, build_summary
+from triage.guardrails import NO_DRAFT_RATIONALE, RAISED_RATIONALE, TRIPWIRE_RATIONALE, _model_text, build_summary
 from triage.ingest import load_alert
 from triage.prompt import DATAMARK, EVENT_VALUE_MAX_BYTES, untrusted_view
-from triage.schemas import SEVERITY_ORDER, Alert, Anomaly, ModelDraft, TriageSummary
+from triage.schemas import (
+    ACTION_MAX, LENGTH_LIMIT_MARKER, MISSING_DESCRIPTION_MAX, RATIONALE_MAX, SEVERITY_ORDER, STEP_MAX, Alert,
+    Anomaly, ModelDraft, TriageSummary,
+)
 from triage.tools import build_tools, registry
 from triage.tools.registry import Tool
 from triage.tripwire import injection_signals
@@ -670,3 +673,101 @@ def test_heuristic_samples_not_flagged(path, settings, tools):
                             alert, settings, tools)
     assert summary.injection_suspected is False and summary.injection_signals == []
     assert "severity_raised_by_tripwire" not in summary.anomalies
+
+
+# --- Length-limit marker (DD-030) -------------------------------------------------
+
+LIMIT_TEXT = {"rationale": "R" * RATIONALE_MAX, "step": "S" * STEP_MAX, "action": "A" * ACTION_MAX,
+              "description": "D" * MISSING_DESCRIPTION_MAX}
+
+
+def _limit_draft(rationale=LIMIT_TEXT["rationale"], step=LIMIT_TEXT["step"], action=LIMIT_TEXT["action"],
+                 description=LIMIT_TEXT["description"], severity="high"):
+    return _draft(severity=severity, rationale=rationale,
+                  next_steps=[{"step": step, "sources": ["host"]}],
+                  containment=[{"action": action, "sources": ["host"]}],
+                  missing_data=[{"kind": "other", "description": description, "sources": ["user"]}])
+
+
+def _model_texts(summary):
+    return {"rationale": summary.severity.rationale, "step": summary.next_steps[0].step,
+            "action": summary.containment[0].action,
+            "description": [m.description for m in summary.missing_data if m.origin == "model"][0]}
+
+
+def test_model_text_at_its_limit_is_marked(settings, tools):
+    """Text that reached its draft limit must keep every character and gain the marker."""
+    alert = _alert()
+    summary = build_summary(_final(alert, _limit_draft(), settings, tools), alert, settings, tools)
+    assert summary.status == "triaged" and summary.severity.origin == "model"
+    assert _model_texts(summary) == {k: v + LENGTH_LIMIT_MARKER for k, v in LIMIT_TEXT.items()}
+    TriageSummary.model_validate_json(summary.model_dump_json())
+
+
+def test_model_text_under_its_limit_is_not_marked(settings, tools):
+    """One character short of the limit, or any shorter text, must be copied unchanged."""
+    alert = _alert()
+    shorter = {k: v[:-1] for k, v in LIMIT_TEXT.items()}
+    summary = build_summary(_final(alert, _limit_draft(**shorter), settings, tools), alert, settings, tools)
+    assert _model_texts(summary) == shorter
+    short = {"rationale": "r", "step": "Review the host.", "action": "Isolate the host.", "description": "No user."}
+    summary = build_summary(_final(alert, _limit_draft(**short), settings, tools), alert, settings, tools)
+    assert _model_texts(summary) == short
+
+
+def test_the_limit_is_checked_on_the_raw_draft_text():
+    """Cleaning never hides or invents a marker: the raw length decides."""
+    # A validated draft cannot hold a lone surrogate (test_draft_text_with_lone_surrogates),
+    # so the helper is checked directly. clean() replaces a surrogate one for one.
+    raw = "x" * (RATIONALE_MAX - 1) + "\ud800"
+    assert _model_text(raw, RATIONALE_MAX) == "x" * (RATIONALE_MAX - 1) + "�" + LENGTH_LIMIT_MARKER
+    assert _model_text(raw[:-1], RATIONALE_MAX) == "x" * (RATIONALE_MAX - 1)
+    assert _model_text("a\udfffb", 3) == "a�b" + LENGTH_LIMIT_MARKER
+
+
+def test_code_owned_text_is_never_marked(settings, tools):
+    """Rule, floor, tripwire and gap text must stay exactly as code wrote it."""
+    # No draft: the rule's rationale.
+    alert = _alert(host="CLINIC-LAB99")
+    summary = build_summary(_run(alert, [BackendError("boom")], settings, tools), alert, settings, tools)
+    assert summary.severity.rationale == NO_DRAFT_RATIONALE
+    # A draft below the floor: the floor's rationale; the gap description stays code text.
+    summary = build_summary(_final(alert, _limit_draft(severity="low"), settings, tools), alert, settings, tools)
+    assert (summary.severity.origin, summary.severity.rationale) == ("rule", RAISED_RATIONALE)
+    assert [m.description for m in summary.missing_data if m.origin == "enrichment"] == ["asset: not found"]
+    assert _model_texts(summary)["step"] == LIMIT_TEXT["step"] + LENGTH_LIMIT_MARKER
+    # The tripwire's rationale.
+    alert = _alert(rule_level="low", event={"note": INJECTION})
+    summary = build_summary(_final(alert, _limit_draft(severity="low"), settings, tools), alert, settings, tools)
+    assert (summary.severity.origin, summary.severity.rationale) == ("tripwire", TRIPWIRE_RATIONALE)
+
+
+@pytest.mark.parametrize("path", SAMPLES, ids=lambda p: f"{p.parent.name}/{p.stem}")
+def test_heuristic_text_is_never_marked(path, settings, tools):
+    """The rule-based backend's text never reaches a limit."""
+    alert = _load(path)
+    summary = build_summary(run_agent(alert, HeuristicBackend(), settings=settings, tools=tools), alert, settings, tools)
+    texts = ([summary.severity.rationale] + [s.step for s in summary.next_steps]
+             + [c.action for c in summary.containment] + [m.description for m in summary.missing_data])
+    assert not any(t.endswith(LENGTH_LIMIT_MARKER) for t in texts)
+
+
+def test_model_text_that_already_ends_with_the_marker(settings, tools):
+    """A model copying the marker gains nothing: under the limit it stays as written, at the limit it is marked once more."""
+    alert = _alert()
+    under = "Possibly cut." + LENGTH_LIMIT_MARKER
+    at = "x" * (STEP_MAX - len(LENGTH_LIMIT_MARKER)) + LENGTH_LIMIT_MARKER
+    summary = build_summary(_final(alert, _limit_draft(rationale=under, step=at), settings, tools),
+                            alert, settings, tools)
+    assert summary.severity.rationale == under
+    assert summary.next_steps[0].step == at + LENGTH_LIMIT_MARKER
+    TriageSummary.model_validate_json(summary.model_dump_json())
+
+
+def test_an_injection_marker_at_the_end_of_limit_text_is_kept(settings, tools):
+    """Marking must not remove the last characters the model wrote, such as a marker it was steered to repeat."""
+    alert = _alert()
+    step = "s" * (STEP_MAX - len(MARKER)) + MARKER
+    summary = build_summary(_final(alert, _limit_draft(step=step), settings, tools), alert, settings, tools)
+    assert MARKER in summary.next_steps[0].step
+    assert summary.next_steps[0].step == step + LENGTH_LIMIT_MARKER

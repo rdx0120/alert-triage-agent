@@ -32,6 +32,7 @@ from .citations import ALERT_FIELDS, _is_empty
 from .config import Settings, get_settings
 from .prompt import clean
 from .schemas import (
+    ACTION_MAX, LENGTH_LIMIT_MARKER, MISSING_DESCRIPTION_MAX, RATIONALE_MAX, STEP_MAX,
     AgentResult, Alert, Anomaly, AssetFinding, ContainmentAction, MissingItem, ModelDraft, NextStep,
     SeverityFinding, SummaryStatus, TechniqueFinding, ToolResult, TriageSummary, severity_rank,
 )
@@ -49,6 +50,17 @@ TRIPWIRE_RATIONALE = "Raised to high: alert data appears to address an AI system
 _GAP_FIELD = {"technique": "rule_tags", "runbook": "rule_tags", "asset": "host", "vulnerability": "cves"}
 _CRITICALITY = get_args(AssetFinding.model_fields["criticality"].annotation)
 _EXPOSURE = get_args(AssetFinding.model_fields["exposure"].annotation)
+
+
+def _model_text(raw: str, limit: int) -> str:
+    """Model text for the summary, cleaned, and marked if it reached its length limit (DD-030).
+
+    The limit is checked on the draft's raw text: it describes what the model
+    generated, so cleaning never hides or invents a marker. The marker is
+    appended, never substituted, so every character the model wrote is kept.
+    """
+    text = clean(raw)
+    return text + LENGTH_LIMIT_MARKER if len(raw) == limit else text
 
 
 def _attack_lookup(results: list[ToolResult], technique_id: str) -> ToolResult | None:
@@ -145,7 +157,7 @@ def build_summary(result: AgentResult, alert: Alert, settings: Settings | None =
                                    rationale=RAISED_RATIONALE, sources=["rule_level"])
     else:
         severity = SeverityFinding(value=draft.severity.value, rule_floor=alert.rule_level, origin="model",
-                                   rationale=clean(draft.severity.rationale),
+                                   rationale=_model_text(draft.severity.rationale, RATIONALE_MAX),
                                    sources=list(draft.severity.sources))
 
     # Injection tripwire, for every run. An alert whose data addresses an AI
@@ -200,12 +212,13 @@ def build_summary(result: AgentResult, alert: Alert, settings: Settings | None =
         asset = AssetFinding(host=alert.host, criticality="unknown", exposure="unknown")
 
     # Text and lists from the draft. Model text is copied only into these
-    # fields and the severity rationale, always through clean().
+    # fields and the severity rationale, always through _model_text().
     next_steps: list[NextStep] = []
     containment: list[ContainmentAction] = []
     if draft is not None:
-        next_steps = [NextStep(step=clean(s.step), sources=list(s.sources)) for s in draft.next_steps]
-        containment = [ContainmentAction(action=clean(c.action), sources=list(c.sources))
+        next_steps = [NextStep(step=_model_text(s.step, STEP_MAX), sources=list(s.sources))
+                      for s in draft.next_steps]
+        containment = [ContainmentAction(action=_model_text(c.action, ACTION_MAX), sources=list(c.sources))
                        for c in draft.containment]
 
     # Missing data: every enrichment gap from code, then the model's own items.
@@ -222,7 +235,7 @@ def build_summary(result: AgentResult, alert: Alert, settings: Settings | None =
             if all(s not in ALERT_FIELDS and model_absence(s) for s in item.sources):
                 anomalies.add("missing_data_model_absence_only")
                 continue
-            description = clean(item.description)
+            description = _model_text(item.description, MISSING_DESCRIPTION_MAX)
             if (item.kind, description) in code_owned:
                 continue
             missing.append(MissingItem(kind=item.kind, description=description, origin="model",

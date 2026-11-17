@@ -14,7 +14,7 @@ from triage.enrich import MAX_CVES, MAX_TECHNIQUES
 from triage.guardrails import build_summary
 from triage.ingest import load_alert
 from triage.render import render_markdown
-from triage.schemas import MAX_MISSING_DATA, Anomaly, InjectionSignal, ModelDraft, TriageSummary
+from triage.schemas import LENGTH_LIMIT_MARKER, MAX_MISSING_DATA, Anomaly, InjectionSignal, ModelDraft, TriageSummary
 
 SAMPLES = sorted((REPO_ROOT / "samples" / "alerts").glob("*/*.json"))
 FOOTER = ("Every containment suggestion requires human approval. "
@@ -153,15 +153,16 @@ def largest():
         "run_id": "0" * 32,
         "status": "insufficient_data",
         "backend": "heuristic",
-        "severity": {"value": "informational", "rule_floor": "informational", "origin": "tripwire",
-                     "rationale": x * 600, "sources": sources},
+        "severity": {"value": "informational", "rule_floor": "informational", "origin": "model",
+                     "rationale": x * 600 + LENGTH_LIMIT_MARKER, "sources": sources},
         "technique": {"technique_id": "T1234.567", "name": x * 256, "basis": "rule_mapping",
                       "origin": "model", "sources": sources},
         "asset": {"host": x * 256, "criticality": "critical", "exposure": "internet-facing",
                   "owner": x * 256, "sources": sources},
-        "next_steps": [{"step": x * 300, "sources": sources}] * 8,
-        "containment": [{"action": x * 300, "sources": sources}] * 5,
-        "missing_data": [{"kind": "vulnerability", "description": x * 200, "origin": "enrichment",
+        "next_steps": [{"step": x * 300 + LENGTH_LIMIT_MARKER, "sources": sources}] * 8,
+        "containment": [{"action": x * 300 + LENGTH_LIMIT_MARKER, "sources": sources}] * 5,
+        # Only model text can carry the length-limit marker (DD-030).
+        "missing_data": [{"kind": "vulnerability", "description": x * 200 + LENGTH_LIMIT_MARKER, "origin": "model",
                           "sources": sources}] * 30,
         "anomalies": [max(get_args(Anomaly), key=len)] * 9,
         "injection_suspected": True,
@@ -274,7 +275,7 @@ def test_output_cap(monkeypatch):
     """The largest valid summary exceeds the output cap, or an oversized result is returned."""
     summary = largest()
     markdown = render_markdown(summary)
-    assert len(markdown.encode("utf-8")) == 181_999
+    assert len(markdown.encode("utf-8")) == 182_503
     assert len(markdown.encode("utf-8")) <= render.MAX_MARKDOWN_BYTES
     assert structure(markdown) == expected_headings(summary)
 
@@ -282,6 +283,15 @@ def test_output_cap(monkeypatch):
     with pytest.raises(ValueError) as exc:
         render_markdown(summary)
     assert str(exc.value) == OVERSIZED
+
+
+def test_a_marked_value_renders_inertly(base):
+    """A length-limit marker becomes Markdown structure, or is changed, in the output."""
+    step = "s" * 300 + LENGTH_LIMIT_MARKER
+    summary = _with(base, next_steps=[{"step": step, "sources": ["host"]}])
+    markdown = render_markdown(summary)
+    assert structure(markdown) == expected_headings(summary)
+    assert step in markdown.split("\n")
 
 
 def test_invalid_summary_is_rejected(base):
