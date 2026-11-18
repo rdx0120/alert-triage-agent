@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 # --- Severity ------------------------------------------------------------
 
@@ -330,13 +330,54 @@ Anomaly = Literal["draft_unavailable", "draft_invalid", "draft_citation_invalid"
                   "technique_not_current_attack", "technique_not_looked_up",
                   "technique_not_bound_to_evidence", "missing_data_model_absence_only"]
 
+# Length-limit marker (DD-030). Ollama enforces the draft's string limits while
+# generating, so model text that reaches one is closed at the limit and is
+# valid JSON, whether it was cut or ended there by chance. The guardrails
+# append this marker to such text; it means "reached the length limit", not
+# "truncated", because the two cases cannot be told apart. The four free-text
+# limits below equal the draft models' limits, which stay what the model is
+# given; only the output side admits the marker.
+LENGTH_LIMIT_MARKER = " [length limit]"
+RATIONALE_MAX = 600
+STEP_MAX = 300
+ACTION_MAX = 300
+MISSING_DESCRIPTION_MAX = 200
+
+
+def _within(limit: int):
+    def check(value: str) -> str:
+        # At most one trailing marker is not counted: everything else, the
+        # model's own text, keeps the original limit for every consumer.
+        body = value[: -len(LENGTH_LIMIT_MARKER)] if value.endswith(LENGTH_LIMIT_MARKER) else value
+        if len(body) > limit:
+            raise ValueError(f"text is longer than {limit} characters")
+        return value
+    return check
+
+
+def _limited(limit: int):
+    return Annotated[str, Field(max_length=limit + len(LENGTH_LIMIT_MARKER)), AfterValidator(_within(limit))]
+
+
+RationaleText = _limited(RATIONALE_MAX)
+StepText = _limited(STEP_MAX)
+ActionText = _limited(ACTION_MAX)
+MissingDescriptionText = _limited(MISSING_DESCRIPTION_MAX)
+
 
 class SeverityFinding(Strict):
     value: Severity
     rule_floor: Severity       # the detection rule's level; value is never below it
     origin: Literal["rule", "model", "tripwire"]
-    rationale: str = Field(max_length=600)
+    rationale: RationaleText
     sources: list[Source] = Field(max_length=MAX_SOURCES)
+
+    @model_validator(mode="after")
+    def _marker_only_on_model_text(self) -> "SeverityFinding":
+        # A rule or tripwire rationale is fixed code text and never reaches a limit.
+        if self.origin != "model" and self.rationale.endswith(LENGTH_LIMIT_MARKER):
+            raise ValueError("only model text can carry the length-limit marker")
+        return self
 
 
 class TechniqueFinding(Strict):
@@ -357,12 +398,12 @@ class AssetFinding(Strict):
 
 
 class NextStep(Strict):
-    step: str = Field(max_length=300)
+    step: StepText
     sources: list[Source] = Field(min_length=1, max_length=MAX_SOURCES)
 
 
 class ContainmentAction(Strict):
-    action: str = Field(max_length=300)
+    action: ActionText
     sources: list[Source] = Field(default_factory=list, max_length=MAX_SOURCES)
     # Literal[True]: a False here fails validation. The agent can suggest, never approve.
     requires_human_approval: Literal[True] = True
@@ -370,9 +411,16 @@ class ContainmentAction(Strict):
 
 class MissingItem(Strict):
     kind: Literal["technique", "asset", "vulnerability", "runbook", "other"]
-    description: str = Field(max_length=200)
+    description: MissingDescriptionText
     origin: MissingOrigin
     sources: list[Source] = Field(default_factory=list, max_length=MAX_SOURCES)
+
+    @model_validator(mode="after")
+    def _marker_only_on_model_text(self) -> "MissingItem":
+        # Enrichment gap descriptions are fixed code text and never reach a limit.
+        if self.origin != "model" and self.description.endswith(LENGTH_LIMIT_MARKER):
+            raise ValueError("only model text can carry the length-limit marker")
+        return self
 
 
 class TriageSummary(Strict):
