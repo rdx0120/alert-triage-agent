@@ -1099,3 +1099,57 @@ read from anywhere is held to the original limit for unmarked text. A model
 can write the marker itself; that produces a false label at most, never
 longer text. The largest valid summary renders to 182,503 bytes, still under
 the renderer's backstop.
+
+---
+
+## DD-031: Enrichment adds the top runbook's triage steps as their own lookup
+
+**Context.** Section-level retrieval ranked the right runbook first but rarely
+returned its procedure. The query is a technique ID and name, which the
+runbook's header repeats verbatim, so the header chunk took a slot for every
+query; descriptive sections such as known false positives outranked "Triage
+steps"; and a returned section was cut to 800 characters and then to the
+view's 512-byte string tier. Measured on the development samples with the
+all-MiniLM-L6-v2 model, the correct runbook ranked first for all nine samples
+with a query, and its complete "Triage steps" reached the model for none.
+
+**Decision.** After an ok `runbook_search`, enrichment calls `runbook_detail`
+for the runbook of the first hit. It returns that runbook's "What this means"
+and "Triage steps" sections, split into paragraphs and list items so that
+each string fits the view whole; nothing is dropped or reworded. "Triage
+steps" is required: a runbook without it is `not_found`, never a partial
+`ok`, so a missing procedure appears as a runbook gap instead of a success.
+
+- The argument is a runbook file name from enrichment's own search result,
+  checked against a bare-name pattern and looked up in the directory's
+  listing; no path is built from it. Only a regular file is read, opened
+  without following a link and capped at 64 KiB, so an entry of an
+  operator's own runbook directory that is a symlink, FIFO or directory
+  cannot bring another file's content into the prompt. Read failures are one
+  fixed message with no path.
+- The tool is not offered to the model (`Tool.model_callable`). A model call
+  that names it is renamed before the evidence log and refused by the
+  gateway. A model-requested result would be capped at 1,024 bytes and arrive
+  cut, the problem this lookup removes, and the evidence log would otherwise
+  answer a call with enrichment's exact arguments from enrichment's record,
+  or stop the run on an evidence-ID collision.
+- An ok search always has a first hit (`runbook_search` answers not_found
+  otherwise); enrichment fails closed if that ever stops holding.
+
+Rejected: raising `top_k` (no guarantee, more noise, sections still cut);
+folding the sections into `runbook_search`'s result (it changes the measured
+tool, and a larger result drops to a lower string tier); removing the header
+or false-positive chunks from the index (it changes which runbook ranks
+first); a detail lookup for every runbook among the hits (up to three more
+citable IDs); editing the vendored runbooks.
+
+**Consequences.** The model receives the procedure it is expected to follow,
+whole, with an evidence ID a step can cite. `runbook_search`, its arguments
+and its results are unchanged, so the evaluation's retrieval measure and
+instruments are unchanged. One more citable ID lowers the reviewed
+final-request headroom from 124 to 89 tokens; the investigation budget is
+unchanged because the tool is not offered. When the enrichment view is full,
+the detail result is packed last and is the first left out, and is then not
+citable. A vendored runbook whose name, sections or size no longer fit fails a
+test instead of reaching the model cut. The runbook index still follows
+symlinks in the runbook directory; only the detail lookup refuses them.

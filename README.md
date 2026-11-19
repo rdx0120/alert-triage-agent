@@ -13,8 +13,8 @@ than in the prompt: the agent has no tools that can change anything, every tool
 call passes through a validating gateway, and empty or failed lookups are
 reported as missing data instead of being filled in.
 
-> **Status:** early development. The data layer, the tool gateway, the four
-> read-only tools, alert ingestion, deterministic enrichment, the agent loop,
+> **Status:** early development. The data layer, the tool gateway, the five
+> read-only tools (four offered to the model), alert ingestion, deterministic enrichment, the agent loop,
 > the rule-based baseline backend, the output guardrails (including the
 > injection tripwire and spotlighting), the Markdown summary renderer, the
 > metadata-only audit writer and the command-line runner are implemented and
@@ -38,7 +38,8 @@ service.
                ▼
  ┌─────────────────────────────┐
  │ deterministic enrichment    │  rule tags → ATT&CK, host → asset,         [implemented]
- │ (code, before any model)    │  CVEs → KEV/EPSS, techniques → runbooks
+ │ (code, before any model)    │  CVEs → KEV/EPSS, techniques → runbooks,
+ │                             │  top runbook → its triage steps
  └─────────────┬───────────────┘
                ▼
  ┌─────────────────────────────┐      ┌──────────────────────────────────┐
@@ -81,7 +82,8 @@ service.
 | Techniques and CVEs read only from rule metadata and scanner fields, never from event text | Attacker text steering severity or lookups | Implemented |
 | Hostname and alert-ID allow-list patterns; ingestion problems reported as `ingest_warnings` | Injected identifiers; silently dropped fields | Implemented |
 | Revoked ATT&CK IDs resolved to their replacement | Stale technique mappings | Implemented |
-| Enrichment lookups take arguments only from rule metadata and allow-listed identifiers; the runbook query is built from ATT&CK data, never alert text | Attacker text choosing lookups or retrieved guidance | Implemented |
+| Enrichment lookups take arguments only from rule metadata and allow-listed identifiers; the runbook query is built from ATT&CK data, and the runbook detail's file name from that search's result, never alert text | Attacker text choosing lookups or retrieved guidance | Implemented |
+| The enrichment-only runbook detail is not offered to the model, and a model call that names it is refused before the evidence log | The model reaching a tool it was not given | Implemented |
 | "Not found" recorded as a gap; a failed lookup marks the enrichment degraded | Broken lookups read as "nothing found" | Implemented |
 | Runbook retrieval with a minimum similarity score | Irrelevant context presented as guidance | Implemented |
 | Spotlighting (datamarking): in the model's view of untrusted alert text every whitespace character is shown as `ˆ`, and the system prompt says marked text is data; caret obfuscation and invisible characters are preserved | Indirect prompt injection | Implemented |
@@ -138,6 +140,7 @@ risk acceptance.
 | `kev_epss_lookup` | `triage/tools/kev_epss.py` | CISA KEV membership and FIRST EPSS score; missing EPSS reported as unknown |
 | `asset_context` | `triage/tools/assets.py` | Synthetic 10-host inventory; unknown hosts reported as not found |
 | `runbook_search` | `triage/tools/runbooks.py`, `triage/embedding_model.py` | Section-level chunks, all-MiniLM-L6-v2 embeddings from a pinned, verified local copy, FAISS exact search |
+| `runbook_detail` | `triage/tools/runbooks.py` | Enrichment only, not offered to the model: the top search hit's "What this means" and "Triage steps", whole; a runbook without triage steps is not found |
 | Data builders | `scripts/` | Rebuild the ATT&CK and KEV/EPSS snapshots from public sources |
 
 Design rationale for each choice is recorded in
@@ -266,7 +269,7 @@ python scripts/build_attack_subset.py <enterprise-attack.json> data/attack_techn
 
 | Capability | Contents | Status |
 |---|---|---|
-| Data and tools | Schemas, versioned snapshots, four read-only tools, tool gateway | Implemented |
+| Data and tools | Schemas, versioned snapshots, five read-only tools (four offered to the model), tool gateway | Implemented |
 | Alert ingestion | Sample alerts from the Sigma rule fixtures; Wazuh alert normalizer | Implemented |
 | Deterministic enrichment | Code-driven lookups before the model runs | Implemented |
 | Agent loop and model backends | Agent loop, limits, the rule-based baseline and the Ollama backend are implemented. The metadata-only audit writer is implemented, and the CLI writes the audit log for every run. Claude API (optional) and the service are planned | Partial |

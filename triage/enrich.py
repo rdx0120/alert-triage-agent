@@ -3,9 +3,11 @@ by code before any model sees the alert.
 
 Lookup arguments come only from validated fields: technique IDs from the
 rule's ATT&CK mapping (alert.attack_tags()), the host (which passed the
-hostname allow-list at ingestion) and CVEs from the scanner field. Event data,
-the rule title and the user are attacker-influenced and never become lookup
-arguments, so alert text cannot choose what is looked up.
+hostname allow-list at ingestion) and CVEs from the scanner field. The runbook
+query is built from ATT&CK lookup results, and the runbook detail's file name
+comes from that search's own result. Event data, the rule title and the user
+are attacker-influenced and never become lookup arguments, so alert text
+cannot choose what is looked up.
 
 Anything that could not be determined is recorded as a Gap with a fixed kind
 and reason. A failed lookup marks the result "degraded"; "not found" is a
@@ -112,6 +114,20 @@ def enrich(alert: Alert, log: EvidenceLog, settings: Settings | None = None) -> 
         result = log.call("runbook_search", {"query": runbook_query, "top_k": RUNBOOK_TOP_K})
         if result.status != "ok":
             gaps.append(_gap("runbook", result))
+        else:
+            # 4b. The first hit's runbook, whole: search ranks a runbook's header
+            # and descriptive sections above its procedure and cuts what it
+            # returns (DD-031). The argument is a file name from our own search
+            # result, so alert text still chooses nothing.
+            hits = result.data.get("hits") if result.data else None
+            if not hits:
+                # runbook_search answers not_found when nothing clears its
+                # threshold, so an ok result always has a first hit. If that
+                # ever stops holding, fail rather than skip the procedure.
+                raise RuntimeError("runbook_search returned ok without hits")
+            detail = log.call("runbook_detail", {"runbook": hits[0]["runbook"]})
+            if detail.status != "ok":
+                gaps.append(_gap("runbook", detail))
 
     degraded = any(g.reason in ("lookup_failed", "invalid_input") for g in gaps)
     return Enrichment(

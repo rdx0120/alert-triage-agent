@@ -99,7 +99,7 @@ are tested.
 | P2 | Ingestion and normalization | Process | `triage/ingest.py`, `triage/schemas.py` |
 | P3 | Deterministic enrichment | Process | `triage/enrich.py`, `triage/evidence.py` |
 | P4 | Agent loop and prompt building | Process | `triage/agent.py`, `triage/prompt.py` |
-| P5 | Tool gateway and the four tools | Process | `triage/tools/registry.py`, `triage/tools/` |
+| P5 | Tool gateway and the five tools | Process | `triage/tools/registry.py`, `triage/tools/` |
 | P6 | Model backends | Process | `triage/backends/heuristic.py`, `triage/backends/ollama.py` |
 | P7 | Output guardrails and injection tripwire | Process | `triage/guardrails.py`, `triage/tripwire.py`, `triage/citations.py` |
 | P8 | Markdown renderer | Process | `triage/render.py` |
@@ -121,7 +121,7 @@ TB1 alert input
 TB2 model server                                            (P4 agent loop)
 [E3 model server] <====== prompts / replies ======>          |         |
                                                              v         |
-                    (P5 gateway + four tools) <-- lookups from P3, P4  |
+                    (P5 gateway + five tools) <-- lookups from P3, P4  |
                       |             |              |                   |
                 [D1 data]    [D2 runbooks]   [D5 model dir]            |
                                                    :                   |
@@ -192,10 +192,11 @@ tests and CI, no model is loaded at all.
 - Threat: injected text makes the agent change something: isolate a host,
   delete data, run a command, send data elsewhere.
 - Controls:
-  - [test] The production tool set is exactly four lookups, and evidence from any other tool is not citable: `tests/test_guardrails.py::test_default_allow_list_is_the_production_tools`, `tests/test_tools.py::test_tool_not_on_allow_list_is_refused`, `tests/test_agent.py::test_unknown_tool_name_is_a_gateway_error`
+  - [test] The production tool set is exactly five lookups, and evidence from any other tool is not citable: `tests/test_guardrails.py::test_default_allow_list_is_the_production_tools`, `tests/test_tools.py::test_tool_not_on_allow_list_is_refused`, `tests/test_agent.py::test_unknown_tool_name_is_a_gateway_error`
+  - [test] The model is offered four of them; the enrichment-only `runbook_detail` is not offered, and a model call that names it is refused before the evidence log, so it is never run for the model, never served enrichment's result and never citable (DD-031): `tests/test_tools.py::test_every_tool_exposes_a_json_schema`, `tests/test_agent.py::test_enrichment_only_tool_is_not_offered`, `tests/test_agent.py::test_model_cannot_call_an_enrichment_only_tool`
   - [test] Network modules are imported only by the model adapter: `tests/test_ollama_backend.py::test_network_code_only_in_adapter`
   - [test] Containment suggestions always require human approval: `tests/test_schemas.py::test_containment_cannot_skip_human_approval`, `tests/test_draft_schema.py::test_containment_cannot_be_preapproved`, `tests/test_guardrails.py::test_containment_needs_human_approval`
-  - [policy] Each of the four tools only reads local snapshots or an in-memory index and cannot write, delete or execute (DD-001); this is established by review of `triage/tools/`, not by a test.
+  - [policy] Each of the five tools only reads local snapshots, the runbook files or an in-memory index and cannot write, delete or execute (DD-001); this is established by review of `triage/tools/`, not by a test.
 - Residual: no test checks that the tools stay read-only. Adding a tool makes
   the tool-set test fail until that test is changed, which forces a review,
   but a change inside an existing tool is caught only by review. The
@@ -211,6 +212,7 @@ tests and CI, no model is loaded at all.
   text is shown, so the model sees evidence chosen by the attacker.
 - Controls:
   - [test] Enrichment arguments come only from rule metadata and allow-listed identifiers, and the runbook query is built from ATT&CK data: `tests/test_enrich.py::test_alert_text_never_reaches_lookup_arguments`, `tests/test_enrich.py::test_no_alert_text_in_gaps_or_resolutions`
+  - [test] The runbook detail's file name comes only from enrichment's own search result, and the sections are fixed: `tests/test_enrich.py::test_runbook_detail_follows_an_ok_search`, `tests/test_tools.py::test_runbook_detail_rejects_bad_names`
   - [test] Model-requested lookups pass the same argument validation and are recorded apart from enrichment: `tests/test_agent.py::test_bad_arguments_are_invalid_input`, `tests/test_agent.py::test_model_lookup_origin_and_repeats`
 - Residual: the model writes its own runbook queries, and the model may be
   influenced by alert text (T01). The runbook corpus is fixed and trusted
@@ -267,6 +269,7 @@ tests and CI, no model is loaded at all.
 - Controls:
   - [test] Validation and rejection messages never contain input: `tests/test_tools.py::test_extra_argument_name_is_not_echoed`, `tests/test_agent.py::test_extra_argument_names_are_not_echoed`, `tests/test_agent.py::test_repair_message_is_sanitized`, `tests/test_ingest_wazuh.py::test_rejection_messages_never_contain_input`, `tests/test_ingest_wazuh.py::test_warnings_never_contain_input_keys_or_values`, `tests/test_citations.py::test_problems_never_contain_a_cited_value`
   - [test] Every CLI message is fixed ASCII text: `tests/test_cli.py::test_every_message_is_fixed_ascii_text`
+  - [test] A runbook that cannot be read is one fixed error with no path or file text: `tests/test_tools.py::test_runbook_detail_read_failures_are_a_fixed_error`, `tests/test_tools.py::test_runbook_detail_refuses_entries_that_are_not_regular_files`
 - Residual: none known.
 
 ### T08 Fabricated provenance
@@ -422,7 +425,10 @@ tests and CI, no model is loaded at all.
   - [test] Trusted sections are deliberately not datamarked: `tests/test_prompt.py::test_metadata_and_enrichment_are_not_datamarked`
 - Residual: open. Integrity rests on review of the pull request that
   changes the data; nothing verifies a snapshot or runbook when it is loaded,
-  runbook text is not datamarked, and the tripwire does not scan it. The
+  runbook text is not datamarked, and the tripwire does not scan it. Since
+  DD-031 the top runbook's triage steps reach the model whole. The detail
+  lookup reads only regular files, but the runbook index still follows a
+  symlink in an operator's own runbook directory. The
   tests above catch stale identifiers, not injected text. The KEV builder
   reads the moving upstream `develop` branch and records the catalog version
   but no source hash, and review of a large data diff is a weak check. A

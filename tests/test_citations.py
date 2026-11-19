@@ -83,6 +83,23 @@ def test_data_omitted_result_is_not_citable(settings, tools):
         assert eid not in citable.support_set | citable.absence_set
 
 
+def test_runbook_detail_is_citable_when_shown(settings, tools):
+    """The runbook's procedure, shown whole, cannot back a step."""
+    log, enrichment = _enriched(_alert(), tools, settings)
+    (detail,) = _ids(log, "runbook_detail")
+    assert detail in _citable(enrichment_view(enrichment), [], log, tools).support_set
+
+
+def test_runbook_detail_is_the_first_left_out_by_packing(monkeypatch, settings, tools):
+    """In a full view the detail is not the result left out, or it stays citable once left out."""
+    log, enrichment = _enriched(_alert(), tools, settings)
+    assert log.results[-1].tool == "runbook_detail"
+    view = _packed_view(monkeypatch, enrichment)
+    (detail,) = _ids(log, "runbook_detail")
+    assert detail not in {r["evidence_id"] for r in view["results"]}
+    assert detail not in _citable(view, [], log, tools).support_set | _citable(view, [], log, tools).absence_set
+
+
 def test_result_left_out_by_packing_is_not_citable(monkeypatch, settings, tools):
     """A result the prompt's size limits left out was never shown, so it is not citable."""
     log, enrichment = _enriched(_alert(), tools, settings)
