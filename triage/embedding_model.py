@@ -42,6 +42,14 @@ MANIFEST_PATH = REPO_ROOT / "data" / "embedding_model.json"
 
 # Set before huggingface_hub is first imported; it reads them only then.
 OFFLINE_VARIABLES = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1"}
+# Progress bars only, set at the same point. transformers 5 draws a weight-loading
+# bar on stderr whose rate differs on every run, so a run's stderr would never be
+# reproducible, and the evaluation could not tell a clean run from one that
+# printed something. transformers takes this setting from huggingface_hub when it
+# is imported. Warnings, errors and the CLI's own messages are not affected.
+# Set here, not by the caller, because the evaluation starts each run with an
+# environment built from nothing.
+QUIET_VARIABLES = {"HF_HUB_DISABLE_PROGRESS_BARS": "1"}
 
 # Weight and code formats that are never part of the model directory.
 FORBIDDEN_SUFFIXES = frozenset({".bin", ".pt", ".pth", ".pkl", ".h5", ".ot", ".onnx", ".py", ".msgpack"})
@@ -185,6 +193,7 @@ def load_sentence_transformer(path: Path | str, manifest: Manifest | None = None
     root = verify_model_dir(path, manifest or load_manifest())
     if "huggingface_hub" not in sys.modules:
         os.environ.update(OFFLINE_VARIABLES)
+        os.environ.update(QUIET_VARIABLES)
     try:
         from sentence_transformers import SentenceTransformer  # optional dependency
     except Exception:  # noqa: BLE001 - not installed, or failed while importing; its text can hold paths
