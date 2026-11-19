@@ -121,9 +121,9 @@
     },
     {
       "path": "tests/data/audit_v1_heuristic.jsonl",
-      "sha256": "8b1c09de9ddba53c8a36f5262eb148f062a2b353e4febe7bfdf4f390ff6253e8",
+      "sha256": "2d16fde5591137cd0491148f152bf4ca91ea91580d43adeecaf5ff0a19aeab38",
       "class": "synthetic",
-      "notes": "Audit log fixture from a heuristic run on synthetic samples."
+      "notes": "Audit log fixture from a heuristic run on synthetic samples, written by the version-1 writer (triage/audit.py at 717a05a^); regenerated with that writer when enrichment added the runbook detail lookup."
     },
     {
       "path": "tests/data/eval/aggregate_fixture.json",

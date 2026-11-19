@@ -12,7 +12,7 @@ from triage.evidence import EvidenceLog
 from triage.ingest import load_alert
 from triage.schemas import Alert, Gap, TechniqueResolution
 from triage.tools import build_tools
-from triage.tools.registry import evidence_id
+from triage.tools.registry import NotFound, Tool, evidence_id
 
 SAMPLES = REPO_ROOT / "samples" / "alerts"
 ALL_SAMPLES = sorted(SAMPLES.glob("*/*.json"))
@@ -238,3 +238,84 @@ def test_replacement_chain_stops_at_hop_cap(run, monkeypatch):
     assert [r.args["technique_id"] for r in attack] == ["T9901", "T9902", "T9903", "T9904"]
     assert [g for g in e.gaps if g.kind == "technique"] == [
         Gap(kind="technique", reason="not_found", evidence_id=attack[-1].evidence_id)]
+
+
+# --- Runbook detail (DD-031) ----------------------------------------------
+
+def replace_tool(tools, name, func):
+    """tools with one tool's function replaced, everything else as built."""
+    t = tools[name]
+    return {**tools, name: Tool(t.name, t.description, t.args_model, func, model_callable=t.model_callable)}
+
+
+def raise_(exc):
+    def func(_args):
+        raise exc
+    return func
+
+
+def test_runbook_detail_follows_an_ok_search(run):
+    e, _ = run(load("wazuh/encoded_powershell"))
+    assert [r.tool for r in e.evidence][-2:] == ["runbook_search", "runbook_detail"]
+    (search,) = by_tool(e, "runbook_search")
+    (detail,) = by_tool(e, "runbook_detail")
+    assert detail.args == {"runbook": search.data["hits"][0]["runbook"]} == {"runbook": "suspicious_encoded_powershell.md"}
+    assert detail.status == "ok" and detail.evidence_id == evidence_id("runbook_detail", detail.args)
+
+
+def test_runbook_detail_is_for_the_first_hit(tools, settings):
+    """The detail is looked up for a runbook other than the first hit's."""
+    hits = [{"score": 0.9, "runbook": "password_spray.md", "section": "Overview", "text": "t"},
+            {"score": 0.8, "runbook": "super_admin_role_granted.md", "section": "Overview", "text": "t"}]
+    log = EvidenceLog(replace_tool(tools, "runbook_search", lambda _args: {"embedder": "x", "hits": hits}))
+    e = enrich(load("wazuh/encoded_powershell"), log, settings)
+    (detail,) = by_tool(e, "runbook_detail")
+    assert detail.args == {"runbook": "password_spray.md"} and detail.status == "ok"
+
+
+def test_search_arguments_unchanged(run):
+    e, _ = run(load("wazuh/encoded_powershell"))
+    (search,) = by_tool(e, "runbook_search")
+    assert search.args == {"query": "T1059.001 PowerShell", "top_k": 3}
+
+
+def test_no_runbook_detail_without_a_technique(run):
+    e, _ = run(load("wazuh/vulnerability_log4shell"))
+    assert by_tool(e, "runbook_search") == by_tool(e, "runbook_detail") == []
+
+
+@pytest.mark.parametrize("exc, reason, status", [
+    (NotFound("nothing scored"), "not_found", "complete"),
+    (OSError("disk gone"), "lookup_failed", "degraded"),
+])
+def test_no_runbook_detail_after_a_failed_search(tools, settings, exc, reason, status):
+    log = EvidenceLog(replace_tool(tools, "runbook_search", raise_(exc)))
+    e = enrich(load("wazuh/encoded_powershell"), log, settings)
+    (search,) = by_tool(e, "runbook_search")
+    assert by_tool(e, "runbook_detail") == []
+    assert [g for g in e.gaps if g.kind == "runbook"] == [
+        Gap(kind="runbook", reason=reason, evidence_id=search.evidence_id)]
+    assert e.status == status
+
+
+@pytest.mark.parametrize("exc, reason, status", [
+    (NotFound("the runbook has no triage steps"), "not_found", "complete"),
+    (RuntimeError("the runbook could not be read"), "lookup_failed", "degraded"),
+])
+def test_runbook_detail_failure_is_a_gap(tools, settings, exc, reason, status):
+    log = EvidenceLog(replace_tool(tools, "runbook_detail", raise_(exc)))
+    e = enrich(load("wazuh/encoded_powershell"), log, settings)
+    (detail,) = by_tool(e, "runbook_detail")
+    assert e.gaps == [Gap(kind="runbook", reason=reason, evidence_id=detail.evidence_id)]
+    assert e.status == status
+
+
+def test_ok_search_without_hits_stops_enrichment(tools, settings):
+    """An ok search with no first hit is skipped silently instead of failing the run.
+
+    runbook_search answers not_found when nothing clears its threshold, so this
+    cannot happen today; if the tool ever changes, the run fails closed.
+    """
+    log = EvidenceLog(replace_tool(tools, "runbook_search", lambda _args: {"embedder": "x", "hits": []}))
+    with pytest.raises(RuntimeError, match="runbook_search returned ok without hits"):
+        enrich(load("wazuh/encoded_powershell"), log, settings)

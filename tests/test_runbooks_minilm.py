@@ -20,6 +20,10 @@ import pytest
 
 from triage.config import REPO_ROOT, Settings
 from triage.embedding_model import ModelUnavailable, load_manifest, verify_model_dir
+from triage.enrich import enrich
+from triage.evidence import EvidenceLog
+from triage.ingest import load_alert
+from triage.prompt import enrichment_view, strings_cut
 from triage.tools import build_tools, run_tool
 
 pytestmark = pytest.mark.slow
@@ -87,3 +91,42 @@ def test_a_minilm_run_writes_nothing_to_stderr(model_dir, tmp_path):
     audit = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
     searches = [r for r in audit if r.get("gen_ai.tool.name") == "runbook_search"]
     assert [r["triage.tool.status"] for r in searches] == ["ok"]   # the model was loaded and searched
+
+
+def expected_runbooks():
+    """The retrieval report's ground truth, loaded from the script rather than copied."""
+    spec = importlib.util.spec_from_file_location("runbook_retrieval_report",
+                                                  REPO_ROOT / "scripts" / "runbook_retrieval_report.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.EXPECTED
+
+
+def shown_triage_steps(settings):
+    """For each sample with a query: whether the model is shown its expected runbook's triage steps, whole."""
+    tools = build_tools(settings)
+    shown = {}
+    for name, runbook in sorted(expected_runbooks().items()):
+        if runbook is None:
+            continue
+        path = REPO_ROOT / "samples" / "alerts" / f"{name}.json"
+        enrichment = enrich(load_alert(path.read_text(encoding="utf-8"), fmt=path.parent.name),
+                            EvidenceLog(tools), settings)
+        (result,) = [r for r in enrichment.evidence if r.tool == "runbook_detail"]
+        rendered = [r for r in enrichment_view(enrichment)["results"] if r["evidence_id"] == result.evidence_id]
+        shown[name] = bool(
+            result.status == "ok" and result.data["runbook"] == runbook and rendered and "data" in rendered[0]
+            and strings_cut(result.data, rendered[0]["data"]) == 0
+            and any(s["section"] == "Triage steps" for s in rendered[0]["data"]["sections"]))
+    return shown
+
+
+def test_every_sample_shows_its_expected_triage_steps(model_dir):
+    """A sample's expected runbook procedure is missing from what the model is shown, or is cut.
+
+    This is the condition fixed before the MiniLM retrieval measurement: the
+    expected runbook's "Triage steps", whole, for every sample with a query.
+    """
+    shown = shown_triage_steps(Settings(embedder="minilm", embedding_model_dir=model_dir))
+    assert len(shown) == 9
+    assert [name for name, ok in shown.items() if not ok] == []

@@ -9,12 +9,19 @@ How it works, end to end:
   4. At query time, embed the query, take the top-k chunks, and drop any
      below a minimum score. If nothing clears the bar, the tool says
      not_found instead of returning the least-bad irrelevant runbook.
+
+runbook_detail: the "What this means" and "Triage steps" sections of one
+runbook, whole, for enrichment only (DD-031). Search ranks a runbook's header
+and descriptive sections above its procedure and cuts what it returns, so the
+procedure is looked up by heading instead of by similarity.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import stat
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -117,9 +124,12 @@ class Chunk:
 
 
 def chunk_runbook(path: Path) -> list[Chunk]:
-    raw = path.read_text(encoding="utf-8")
+    return _chunk_text(path.name, path.stem, path.read_text(encoding="utf-8"))
+
+
+def _chunk_text(name: str, stem: str, raw: str) -> list[Chunk]:
     title_match = re.search(r"^# (.+)$", raw, flags=re.M)
-    title = title_match.group(1).strip() if title_match else path.stem
+    title = title_match.group(1).strip() if title_match else stem
     parts = re.split(r"^## ", raw, flags=re.M)
     chunks = []
     # parts[0] is the header block (title, rule, severity, ATT&CK); keep it as an "Overview" chunk.
@@ -132,7 +142,7 @@ def chunk_runbook(path: Path) -> list[Chunk]:
             section, _, body = part.partition("\n")
         # Prefix the title so a section like "Triage steps" still says which runbook it belongs to.
         text = f"{title}\n## {section.strip()}\n{body.strip()}"
-        chunks.append(Chunk(path.name, title, section.strip(), text))
+        chunks.append(Chunk(name, title, section.strip(), text))
     return chunks
 
 
@@ -176,3 +186,109 @@ def make_runbook_search(runbook_dir: Path, embedder_name: str, model_dir: Path |
         }
 
     return runbook_search
+
+
+# --- runbook_detail --------------------------------------------------------
+
+DETAIL_DESCRIPTION = (
+    "The 'What this means' and 'Triage steps' sections of one runbook, by file name. "
+    "Used by enrichment; not offered to the model."
+)
+# Returned in this order. "Triage steps" is the reason the lookup exists, so a
+# runbook without it is not_found: an ok without the procedure would record
+# success while the procedure is missing.
+DETAIL_SECTIONS = ("What this means", "Triage steps")
+REQUIRED_SECTION = "Triage steps"
+# Far above any vendored runbook (under 5 KB); a bound for a custom directory.
+MAX_RUNBOOK_BYTES = 64 * 1024
+# Fixed: the gateway reports "{type}: {message}", and an OSError's own message
+# holds a local path.
+READ_ERROR = "the runbook could not be read"
+_ITEM_START = re.compile(r"(\d+\.|[-*]) ")
+
+
+class RunbookDetailArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # A bare file name, used only as a key into the directory's own listing.
+    runbook: str = Field(pattern=r"^[a-z0-9_]{1,64}\.md$")
+
+
+def section_items(body: str) -> list[str]:
+    """Paragraphs and list items, each with its line breaks joined by one space.
+
+    Hard-wrapped lines are joined so each item is one string the view can show
+    whole; nothing is dropped or reworded.
+    """
+    items: list[str] = []
+    current: list[str] = []
+    for line in body.splitlines():
+        text = line.strip()
+        if current and (not text or _ITEM_START.match(text)):
+            items.append(" ".join(current))
+            current = []
+        if text:
+            current.append(text)
+    if current:
+        items.append(" ".join(current))
+    return items
+
+
+def _read_runbook(path: Path) -> str:
+    """The text of one regular file, opened without following a link.
+
+    A runbook directory can be the operator's own (TRIAGE_RUNBOOK_DIR). Only the
+    directory itself is trusted: an entry that is a symlink, FIFO, device or
+    directory is refused, so a link named like a runbook cannot bring another
+    file's content into the prompt, and a FIFO cannot hang the run. Anything
+    unexpected is the same fixed error, which degrades enrichment.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        # lstat as well as O_NOFOLLOW, for platforms that do not have the flag.
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            raise OSError
+        fd = os.open(path, flags)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError
+            data = b""
+            while len(data) <= MAX_RUNBOOK_BYTES and (chunk := os.read(fd, MAX_RUNBOOK_BYTES + 1 - len(data))):
+                data += chunk
+        finally:
+            os.close(fd)
+        if len(data) > MAX_RUNBOOK_BYTES:
+            raise OSError
+        # The same newline handling as Path.read_text(), which the index uses.
+        return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except (OSError, UnicodeDecodeError):
+        raise RuntimeError(READ_ERROR) from None
+
+
+def _section_body(chunk: Chunk) -> str:
+    return chunk.text.removeprefix(f"{chunk.title}\n## {chunk.section}\n")
+
+
+def make_runbook_detail(runbook_dir: Path):
+    def runbook_detail(args: RunbookDetailArgs) -> dict:
+        try:
+            listing = {p.name: p for p in sorted(runbook_dir.glob("*.md"))}
+        except OSError:
+            raise RuntimeError(READ_ERROR) from None
+        # The path comes from the listing, never from the argument.
+        path = listing.get(args.runbook)
+        if path is None:
+            raise NotFound("no such runbook")
+        chunks = _chunk_text(path.name, path.stem, _read_runbook(path))
+        by_section: dict[str, Chunk] = {}
+        for c in chunks:
+            by_section.setdefault(c.section, c)   # a repeated heading: the first one
+        sections = []
+        for heading in DETAIL_SECTIONS:
+            items = section_items(_section_body(by_section[heading])) if heading in by_section else []
+            if items:
+                sections.append({"section": heading, "items": items})
+        if not any(s["section"] == REQUIRED_SECTION for s in sections):
+            raise NotFound("the runbook has no triage steps")
+        return {"runbook": path.name, "title": chunks[0].title, "sections": sections}
+
+    return runbook_detail

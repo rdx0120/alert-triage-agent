@@ -402,7 +402,7 @@ def test_unoffered_tool_error_is_never_citable(finding, pass_tools, settings, to
 
 
 def test_default_allow_list_is_the_production_tools(settings, tools):
-    """With tools omitted, evidence from a tool outside the four production tools must not be citable."""
+    """With tools omitted, evidence from a tool outside the five production tools must not be citable."""
     class NoteArgs(BaseModel):
         model_config = ConfigDict(extra="forbid")
         host: str
@@ -412,7 +412,8 @@ def test_default_allow_list_is_the_production_tools(settings, tools):
     note = EID("note_lookup", {"host": "CLINIC-BILL01"})
     text = _draft(next_steps=[{"step": "Read the note.", "sources": [note]}])
     result = _final(alert, text, settings, extra, lookups=[("note_lookup", {"host": "CLINIC-BILL01"})])
-    assert set(build_tools(settings)) == {"attack_lookup", "kev_epss_lookup", "asset_context", "runbook_search"}
+    assert set(build_tools(settings)) == {"attack_lookup", "kev_epss_lookup", "asset_context", "runbook_search",
+                                          "runbook_detail"}
     assert build_summary(result, alert, settings, extra).status == "triaged"
     summary = build_summary(result, alert, settings)
     assert summary.status == "error" and summary.anomalies == ["draft_citation_invalid"]

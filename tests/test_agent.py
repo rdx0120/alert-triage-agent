@@ -287,6 +287,52 @@ def test_unknown_tool_name_is_a_gateway_error(settings, tools):
     assert result.evidence_origin[last.evidence_id] == "model"
 
 
+# --- Enrichment-only tools (DD-031) -------------------------------------
+
+DETAIL_ARGS = {"runbook": "suspicious_encoded_powershell.md"}
+
+
+def test_enrichment_only_tool_is_not_offered(settings, tools):
+    """runbook_detail is offered to the model in an investigation request."""
+    replies = [_calls(_attack("T1003")), ChatReply(), ChatReply(text=VALID)]
+    _, backend = _run(_powershell(), replies, settings, tools)
+    investigation = [r for r in backend.requests if r.tools]
+    assert len(investigation) == 2
+    for request in investigation:
+        assert [s["function"]["name"] for s in request.tools] == [
+            "attack_lookup", "kev_epss_lookup", "asset_context", "runbook_search"]
+
+
+@pytest.mark.parametrize("args", [DETAIL_ARGS, {"runbook": "password_spray.md"}],
+                         ids=["enrichment-arguments", "another-runbook"])
+def test_model_cannot_call_an_enrichment_only_tool(settings, tools, args):
+    """A model call naming runbook_detail runs it, is served enrichment's result, is citable or stops the run."""
+    calls = []
+    detail = tools["runbook_detail"]
+
+    def counting(a):
+        calls.append(a)
+        return detail.func(a)
+
+    spied = {**tools, "runbook_detail": dataclasses.replace(detail, func=counting)}
+    replies = [_calls(("runbook_detail", args)), ChatReply(), ChatReply(text=VALID)]
+    result, backend = _run(_powershell(), replies, settings, spied)
+    assert result.stop_reason == "completed"
+    assert len(calls) == 1   # enrichment's own lookup, nothing for the model
+    (enrichment_detail,) = [r for r in result.enrichment.evidence if r.tool == "runbook_detail"]
+    assert enrichment_detail.status == "ok" and enrichment_detail.args == DETAIL_ARGS
+    assert result.evidence_origin[enrichment_detail.evidence_id] == "enrichment"
+    refused = result.evidence[-1]
+    assert (refused.tool, refused.status) == (agent.NOT_OFFERED, "error")
+    assert "not on the allow-list" in refused.error
+    assert refused.evidence_id == registry.evidence_id(agent.NOT_OFFERED, args) != enrichment_detail.evidence_id
+    assert result.evidence_origin[refused.evidence_id] == "model"
+    assert (result.tool_records[-1].tool, result.tool_records[-1].requested_by) == (agent.NOT_OFFERED, "model")
+    citable = backend.requests[-1].citable
+    assert refused.evidence_id not in citable.support_set | citable.absence_set
+    assert enrichment_detail.evidence_id in citable.support_set
+
+
 @pytest.mark.parametrize("name", [f"attack_lookup {MARKER} please", 42, None, "Attack_Lookup", "a" * 65])
 def test_malformed_tool_names_are_replaced(name, settings, tools):
     """Only a fixed name shape reaches the gateway, the history and evidence IDs."""

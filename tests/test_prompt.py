@@ -439,9 +439,10 @@ def max_citable_ids():
     """The most evidence IDs one run can hold, from the loop's and enrichment's limits.
 
     Enrichment: each technique tag's lookup plus its replacement hops, one
-    asset, each CVE and one runbook search. Then one per model tool call.
+    asset, each CVE, one runbook search and one runbook detail. Then one per
+    model tool call.
     """
-    enrichment = MAX_TECHNIQUES * (1 + MAX_REPLACEMENT_HOPS) + 1 + MAX_CVES + 1
+    enrichment = MAX_TECHNIQUES * (1 + MAX_REPLACEMENT_HOPS) + 1 + MAX_CVES + 1 + 1
     return enrichment + Limits().max_tool_calls
 
 
@@ -461,12 +462,12 @@ def worst_case_schema(tools):
 
 def test_worst_case_citable_set(tools):
     """The schema bound is computed for the most citable IDs a run can hold, at the longest ID."""
-    assert max_citable_ids() == 33
+    assert max_citable_ids() == 34
     assert max(tools, key=len) == "kev_epss_lookup"   # tools is build_tools(settings)
     schema = worst_case_schema(tools)
     enums = [schema["$defs"]["SupportSource"]["enum"], schema["$defs"].get("AbsenceSource", {}).get("enum", [])]
     ids = [v for enum in enums for v in enum if ":" in v]
-    assert len(ids) == len(set(ids)) == 33
+    assert len(ids) == len(set(ids)) == 34
     assert {len(v) for v in ids} == {len("kev_epss_lookup") + 17}
 
 
@@ -504,8 +505,9 @@ def worst_case_arithmetic(tools):
                 + TEMPLATE_TOKENS_BASE + TEMPLATE_TOKENS_PER_MESSAGE * n_messages
                 + TEMPLATE_TOKENS_PER_TOOL * n_specs)
 
+    # Only the tools offered to the model are sent and counted (DD-031).
     investigation = bound(fixed["investigation"], history_messages + 1, _request([], tool_specs(tools), None),
-                          len(tools))
+                          len(tool_specs(tools)))
     final = bound(fixed["final"] + fixed["repair"], history_messages + 2, _request([], None, schema), 0)
     return investigation, final, sum(fixed.values())
 
@@ -632,8 +634,9 @@ def test_worst_case_final_requests_without_instruction(monkeypatch, settings, to
 def test_worst_case_numbers_with_datamarking(settings, tools):
     """A budget that moved from the reviewed numbers would mean an unreviewed change to the prompt or caps."""
     investigation, final, fixed = worst_case_arithmetic(tools)
-    assert (investigation, final, fixed) == (27_344, 31_620, 7_964)
-    assert CONTEXT_TOKENS - MAX_OUTPUT_TOKENS - final == 124
+    assert (investigation, final, fixed) == (27_344, 31_655, 7_999)
+    # One more citable ID, the runbook detail, took 35 bytes of the 124 (DD-031).
+    assert CONTEXT_TOKENS - MAX_OUTPUT_TOKENS - final == 89
     _, backend = run_worst_case(settings, tools)
     assert len(backend.requests) == 6
     assert all(fits(request) for request in backend.requests)

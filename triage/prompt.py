@@ -356,7 +356,8 @@ def initial_messages(alert: Alert, enrichment: Enrichment) -> list[dict]:
 
 
 def tool_specs(tools: dict[str, Tool]) -> list[dict]:
+    """The tools offered to the model: only those it may call (DD-031)."""
     return [{"type": "function",
              "function": {"name": t.name, "description": t.description,
                           "parameters": t.args_model.model_json_schema()}}
-            for t in tools.values()]
+            for t in tools.values() if t.model_callable]

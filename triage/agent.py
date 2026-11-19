@@ -96,6 +96,26 @@ def normalize_call(call: ToolCall) -> ToolCall:
     return ToolCall(name=name, arguments=arguments)
 
 
+# The name a model call to an enrichment-only tool is renamed to. It is not on
+# the allow-list, so the gateway refuses it and its result is never citable.
+NOT_OFFERED = "tool_not_offered"
+
+
+def _offered_only(call: ToolCall, tools: dict[str, Tool]) -> ToolCall:
+    """A call to a tool the model is not offered, renamed so that it is refused (DD-031).
+
+    The rename happens before the evidence log. The log answers a repeated call
+    from its own records, so a model call with enrichment's exact arguments
+    would otherwise be handed enrichment's result, and a refusal recorded under
+    the real name would share that result's evidence ID and stop the run with
+    a collision: alert text could then end a run by naming the tool.
+    """
+    tool = tools.get(call.name)
+    if tool is not None and not tool.model_callable:
+        return ToolCall(name=NOT_OFFERED, arguments=call.arguments)
+    return call
+
+
 def _structural_problems(error: ValidationError) -> list[str]:
     # Field names chosen by the model may be copied from alert text, so only
     # our own field names, list indexes and Pydantic's fixed error codes are kept.
@@ -316,7 +336,7 @@ def run_agent(alert: Alert, backend: Backend, *, settings: Settings | None = Non
                 break
             room = min(limits.max_tool_calls_per_turn, limits.max_tool_calls - tool_calls_run)
             # Normalize first; the raw names and arguments are not used after this.
-            accepted = [normalize_call(c) for c in reply.tool_calls[:room]]
+            accepted = [_offered_only(normalize_call(c), tools) for c in reply.tool_calls[:room]]
             record = model_calls[-1]
             record.tool_calls_requested = len(reply.tool_calls)
             record.tool_calls_run = len(accepted)

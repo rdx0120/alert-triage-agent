@@ -32,6 +32,10 @@ class Tool:
     description: str
     args_model: type[BaseModel]
     func: Callable[[BaseModel], dict[str, Any]]
+    # False for a lookup that only enrichment makes. Such a tool is not offered
+    # to the model, and the agent loop refuses a model call that names it, so
+    # what the model can reach stays exactly the tools it is shown (DD-031).
+    model_callable: bool = True
 
     def json_schema(self) -> dict[str, Any]:
         """The schema handed to the LLM's tool-calling API."""
