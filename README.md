@@ -182,6 +182,28 @@ it still matches the manifest exactly (DD-027).
 Configuration is read from environment variables; `.env.example` lists them
 with their defaults.
 
+### Evaluation host
+
+The evaluation runs in an environment pinned file by file, for CPython 3.12 on
+Linux x86_64 only (DD-032). Three hash-pinned locks hold exactly the versions
+that passed the real-model tests, and each is installed from one index. In a
+fresh virtual environment, from the repository root:
+
+```bash
+python -m pip install --isolated --require-hashes --no-deps --index-url https://pypi.org/simple -r requirements/eval-pip.lock
+python -m pip install --isolated --require-hashes --no-deps --index-url https://download.pytorch.org/whl/cpu -r requirements/eval-torch.lock
+python -m pip install --isolated --require-hashes --no-deps --index-url https://pypi.org/simple -r requirements/eval.lock
+python -m pip install --isolated --no-deps --no-build-isolation -e .
+python -m pip check
+```
+
+`--isolated` ignores pip's configuration files and `PIP_*` variables, so no
+other index can take part. On other platforms, use the instructions above;
+they are not pinned. To change a version, edit `requirements/eval.in`,
+regenerate `requirements/eval.lock` with the command in its header, take a
+changed torch or pip hash from its index's published SHA-256, and rerun
+`python -m pytest -m slow` on the evaluation host.
+
 ## Usage
 
 ```bash
