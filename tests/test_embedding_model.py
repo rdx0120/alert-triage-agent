@@ -36,7 +36,8 @@ LIBRARIES = ("sentence_transformers", "huggingface_hub")
 
 FAKE_HUB_CONSTANTS = '''import os
 HF_HUB_OFFLINE = os.environ.get("HF_HUB_OFFLINE", "").upper() in {"1", "ON", "YES", "TRUE"}
-ENV_AT_IMPORT = {k: os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_HUB_DISABLE_TELEMETRY")}
+ENV_AT_IMPORT = {k: os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_HUB_DISABLE_TELEMETRY",
+                                              "HF_HUB_DISABLE_PROGRESS_BARS")}
 '''
 FAKE_SENTENCE_TRANSFORMERS = '''import huggingface_hub.constants  # the real library imports huggingface_hub too
 from triage.tools.runbooks import HashingEmbedder
@@ -243,12 +244,47 @@ def test_relative_setting_reaches_the_library_as_an_absolute_path(model, fake_li
 
 
 def test_offline_mode_is_set_before_import(model, fake_library):
-    """huggingface_hub is first imported without offline mode, telemetry off and the transformers switch."""
+    """huggingface_hub is first imported without offline mode, telemetry off, the transformers switch and progress
+    bars off, or a caller's setting turns the bars back on."""
     directory, manifest = model
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"   # a caller's setting does not turn the bars back on
     embedding_model.load_sentence_transformer(directory, manifest)
     constants = sys.modules["huggingface_hub.constants"]
     assert constants.HF_HUB_OFFLINE is True
-    assert constants.ENV_AT_IMPORT == embedding_model.OFFLINE_VARIABLES
+    assert constants.ENV_AT_IMPORT == {**embedding_model.OFFLINE_VARIABLES, **embedding_model.QUIET_VARIABLES}
+    assert embedding_model.QUIET_VARIABLES == {"HF_HUB_DISABLE_PROGRESS_BARS": "1"}
+
+
+NOISY_SENTENCE_TRANSFORMERS = '''import os
+import sys
+import warnings
+
+import huggingface_hub.constants  # noqa: F401 - the real library imports huggingface_hub too
+from triage.tools.runbooks import HashingEmbedder
+
+
+class SentenceTransformer:
+    def __init__(self, model_name_or_path, **kwargs):
+        # Like transformers: a progress bar unless progress bars are disabled, and a
+        # warning either way.
+        if os.environ.get("HF_HUB_DISABLE_PROGRESS_BARS") != "1":
+            sys.stderr.write("\\rLoading weights: 100%|##########| 103/103 [00:00<00:00, 4500.09it/s]\\n")
+        warnings.warn("a library warning")
+        sys.stderr.write("library error text\\n")
+        self._embedder = HashingEmbedder()
+'''
+
+
+def test_only_progress_bars_are_silenced(model, fake_library, capfd):
+    """Loading the model hides a library warning or a library's error text, or lets a progress bar reach stderr."""
+    directory, manifest = model
+    fakes = next(p for p in sys.path if p.endswith("fakes"))
+    (Path(fakes) / "sentence_transformers" / "__init__.py").write_text(NOISY_SENTENCE_TRANSFORMERS)
+    with pytest.warns(UserWarning, match="a library warning"):
+        embedding_model.load_sentence_transformer(directory, manifest)
+    err = capfd.readouterr().err
+    assert err == "library error text\n"
+    assert "Loading weights" not in err
 
 
 def test_library_imported_without_offline_mode_is_refused(model, fake_library):

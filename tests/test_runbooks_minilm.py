@@ -11,12 +11,14 @@ import.
 """
 
 import importlib.util
+import json
 import socket
+import subprocess
 import sys
 
 import pytest
 
-from triage.config import Settings
+from triage.config import REPO_ROOT, Settings
 from triage.embedding_model import ModelUnavailable, load_manifest, verify_model_dir
 from triage.tools import build_tools, run_tool
 
@@ -62,3 +64,26 @@ def test_network_guard_works_in_this_environment(no_network):
     with pytest.raises(OSError):
         socket.create_connection(("192.0.2.1", 9), timeout=1)
     assert no_network.attempts == ["create_connection"]
+
+
+def test_a_minilm_run_writes_nothing_to_stderr(model_dir, tmp_path):
+    """A clean MiniLM run writes anything to stderr, such as a weight-loading progress bar.
+
+    The environment is built from nothing, as the evaluation harness builds it, so
+    nothing the caller exports reaches the run: only the loader can turn the bars off.
+    """
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "LANG": "C.UTF-8", "TZ": "UTC", "PYTHONHASHSEED": "0",
+           "TRIAGE_BACKEND": "heuristic", "TRIAGE_EMBEDDER": "minilm",
+           "TRIAGE_EMBEDDING_MODEL_DIR": str(model_dir), "OLLAMA_HOST": "http://127.0.0.1:11434"}
+    alert = REPO_ROOT / "samples" / "alerts" / "wazuh" / "encoded_powershell.json"
+    done = subprocess.run([sys.executable, "-s", "-B", "-P", "-m", "triage", "--format", "wazuh", str(alert),
+                           "--audit-log", str(tmp_path / "audit.jsonl")],
+                          env=env, cwd=tmp_path, capture_output=True, timeout=600)
+    assert done.returncode == 0
+    assert done.stderr == b""
+    assert json.loads(done.stdout)["status"] == "triaged"
+    audit = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
+    searches = [r for r in audit if r.get("gen_ai.tool.name") == "runbook_search"]
+    assert [r["triage.tool.status"] for r in searches] == ["ok"]   # the model was loaded and searched
