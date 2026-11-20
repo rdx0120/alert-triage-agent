@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -236,7 +237,9 @@ def test_the_frozen_server_settings_pass(ro_clone, tmp_path, fake):
      "server: manager environment differs from the manifest"),
     ({"exec_path": "/usr/local/bin/ollama", "exec_argv": ["/usr/local/bin/ollama", "serve"]},
      "server: ExecStart differs from the manifest"),
-    ({"environment_files": "/etc/ollama.env (ignore_errors=no)"}, "server: unit lists an environment file"),
+    ({"environment_files": ["/etc/ollama.env (ignore_errors=no)"]}, "server: unit lists an environment file"),
+    ({"environment_files": ["/etc/a.env (ignore_errors=no)", "/etc/b.env (ignore_errors=yes)"]},
+     "server: unit lists an environment file"),
     ({"active": "inactive"}, "server: unit is not active"),
 ])
 def test_each_changed_server_setting_is_reported(ro_clone, tmp_path, fake, changes, message):
@@ -244,22 +247,70 @@ def test_each_changed_server_setting_is_reported(ro_clone, tmp_path, fake, chang
     assert message in server(ro_clone, tmp_path, fake)
 
 
+# systemd v255 prints no EnvironmentFiles line for a unit without one, so these
+# outputs have none, as on the evaluation host.
 @pytest.mark.parametrize("raw, message", [
     ("ActiveState=active\nMainPID=1\nExecMainStartTimestampMonotonic=1\nEnvironment=OLLAMA_HOST=\"127.0.0.1:1\"\n"
-     "EnvironmentFiles=\nExecStart={ path=/usr/bin/ollama ; argv[]=/usr/bin/ollama serve }\n",
+     "ExecStart={ path=/usr/bin/ollama ; argv[]=/usr/bin/ollama serve }\n",
      "server: property Environment cannot be read"),
-    ("ActiveState=active\nMainPID=1\nExecMainStartTimestampMonotonic=1\nEnvironment=\nEnvironmentFiles=\n"
+    ("ActiveState=active\nMainPID=1\nExecMainStartTimestampMonotonic=1\nEnvironment=\n"
      "ExecStart={ path=/usr/bin/ollama ; argv[]=/usr/bin/ollama serve } ; { path=/usr/bin/ollama ; argv[]=x }\n",
      "server: property ExecStart cannot be read"),
-    ("ActiveState=active\nMainPID=1\nExecMainStartTimestampMonotonic=1\nEnvironment=\nEnvironmentFiles=\n",
+    ("ActiveState=active\nMainPID=1\nExecMainStartTimestampMonotonic=1\nEnvironment=\n",
      "server: property ExecStart missing"),
     ("ActiveState=active\nActiveState=active\nMainPID=1\nExecMainStartTimestampMonotonic=1\nEnvironment=\n"
-     "EnvironmentFiles=\nExecStart={ path=/usr/bin/ollama ; argv[]=/usr/bin/ollama serve }\n",
+     "ExecStart={ path=/usr/bin/ollama ; argv[]=/usr/bin/ollama serve }\n",
      "server: property ActiveState repeated"),
+    ("ActiveState=active\nMainPID=1\nExecMainStartTimestampMonotonic=1\nEnvironment=\nEnvironmentFiles=\n"
+     "ExecStart={ path=/usr/bin/ollama ; argv[]=/usr/bin/ollama serve }\n",
+     "server: property EnvironmentFiles cannot be read"),
+    ("ActiveState=active\nMainPID=1\nExecMainStartTimestampMonotonic=1\nEnvironment=\nUser=ollama\n"
+     "ExecStart={ path=/usr/bin/ollama ; argv[]=/usr/bin/ollama serve }\n",
+     "server: unexpected property line"),
+    ("MainPID=1\nExecMainStartTimestampMonotonic=1\nEnvironment=\n"
+     "ExecStart={ path=/usr/bin/ollama ; argv[]=/usr/bin/ollama serve }\n",
+     "server: property ActiveState missing"),
 ])
 def test_unreadable_service_output_fails_closed(ro_clone, tmp_path, fake, raw, message):
     fake.set(raw_show=raw)
     assert server(ro_clone, tmp_path, fake) == [message]
+
+
+# The shape systemd v255 prints for a unit with no environment file: five lines in
+# its own order, no EnvironmentFiles line (synthetic values).
+V255_NO_FILE = (
+    "MainPID=983\n"
+    "ExecMainStartTimestampMonotonic=4246178\n"
+    "ExecStart={ path=/usr/local/bin/ollama ; argv[]=/usr/local/bin/ollama serve ; ignore_errors=no ; "
+    "start_time=[Wed 2026-11-18 15:37:48 UTC] ; stop_time=[n/a] ; pid=983 ; code=(null) ; status=0/0 }\n"
+    "Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin OLLAMA_HOST=127.0.0.1:11435\n"
+    "ActiveState=active\n"
+)
+
+
+def test_the_v255_shape_without_environment_files_parses_as_no_file():
+    state = identity.parse_show(V255_NO_FILE)
+    assert state.environment_files == ""
+    assert (state.active_state, state.main_pid, state.start_monotonic) == ("active", 983, 4246178)
+    assert state.environment == ("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                                 "OLLAMA_HOST=127.0.0.1:11435")
+    assert (state.exec_path, state.exec_argv) == ("/usr/local/bin/ollama", ("/usr/local/bin/ollama", "serve"))
+
+
+def test_each_listed_environment_file_is_kept_for_the_contract_to_refuse():
+    text = V255_NO_FILE + "EnvironmentFiles=/etc/a.env (ignore_errors=no)\nEnvironmentFiles=/etc/b.env (ignore_errors=yes)\n"
+    state = identity.parse_show(text)
+    assert state.environment_files == "/etc/a.env (ignore_errors=no)\n/etc/b.env (ignore_errors=yes)"
+
+
+def test_the_systemctl_double_prints_environment_files_like_v255(ro_clone, tmp_path, fake):
+    """No line without a file and one line per file, so the suite exercises the host's shape."""
+    out = subprocess.run([fake.path, "show", "x.service"], capture_output=True, text=True, check=True).stdout
+    assert "EnvironmentFiles" not in out
+    fake.set(environment_files=["/etc/a.env (ignore_errors=no)", "/etc/b.env (ignore_errors=yes)"])
+    out = subprocess.run([fake.path, "show", "x.service"], capture_output=True, text=True, check=True).stdout
+    assert [ln for ln in out.splitlines() if ln.startswith("EnvironmentFiles=")] == [
+        "EnvironmentFiles=/etc/a.env (ignore_errors=no)", "EnvironmentFiles=/etc/b.env (ignore_errors=yes)"]
 
 
 def test_a_changed_main_pid_counts_a_restart_and_is_not_a_failure(ro_clone, tmp_path, fake):

@@ -422,7 +422,7 @@ exec_start = "{{ path=%s ; argv[]=%s ; ignore_errors=no ; start_time=[n/a] ; pid
     state["exec_path"], " ".join(state["exec_argv"]), state["main_pid"])
 lines = ["ActiveState=" + state["active"], "MainPID=%d" % state["main_pid"],
          "ExecMainStartTimestampMonotonic=%d" % state["start"], "Environment=" + " ".join(state["environment"]),
-         "EnvironmentFiles=" + state["environment_files"], "ExecStart=" + exec_start]
+         *["EnvironmentFiles=" + f for f in state["environment_files"]], "ExecStart=" + exec_start]
 sys.stdout.write("".join(line + "\\n" for line in lines))
 sys.exit(state.get("exit", 0))
 '''
@@ -469,7 +469,7 @@ class FakeSystemctl:
 def default_unit_state() -> dict:
     s = server_settings()
     return {"active": "active", "main_pid": 4242, "start": 1000, "environment": list(s["environment"]),
-            "environment_files": "", "exec_path": s["exec_start"]["path"], "exec_argv": list(s["exec_start"]["argv"]),
+            "environment_files": [], "exec_path": s["exec_start"]["path"], "exec_argv": list(s["exec_start"]["argv"]),
             "manager": list(s["manager_environment"])}
 
 
