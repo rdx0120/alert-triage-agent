@@ -477,17 +477,28 @@ def _parse_exec_start(value: str) -> tuple[str, tuple[str, ...]]:
 
 def parse_show(text: str) -> UnitState:
     values: dict[str, str] = {}
+    # systemd prints EnvironmentFiles as one line per configured file and prints
+    # nothing when there is none, even with --all (v255,
+    # src/systemctl/systemctl-show.c). So absence is the normal "no file" answer,
+    # and several lines are several files, which the checks then refuse.
+    environment_files: list[str] = []
     for line in text.split("\n"):
         if line == "":
             continue
         key, sep, value = line.partition("=")
         if not sep or key not in SHOW_PROPERTIES:
             raise CheckRefused("server: unexpected property line")
+        if key == "EnvironmentFiles":
+            # systemd never prints an empty value here; one would be ambiguous.
+            if value == "":
+                raise CheckRefused("server: property EnvironmentFiles cannot be read")
+            environment_files.append(value)
+            continue
         if key in values:
             raise CheckRefused(f"server: property {key} repeated")
         values[key] = value
     for key in SHOW_PROPERTIES:
-        if key not in values:
+        if key != "EnvironmentFiles" and key not in values:
             raise CheckRefused(f"server: property {key} missing")
     try:
         main_pid = int(values["MainPID"])
@@ -501,7 +512,7 @@ def parse_show(text: str) -> UnitState:
     if any(e == "" for e in entries):
         raise CheckRefused("server: property Environment cannot be read")
     path, argv = _parse_exec_start(values["ExecStart"])
-    return UnitState(values["ActiveState"], main_pid, start, entries, values["EnvironmentFiles"], path, argv)
+    return UnitState(values["ActiveState"], main_pid, start, entries, "\n".join(environment_files), path, argv)
 
 
 def read_unit(unit: str, systemctl: str = SYSTEMCTL) -> UnitState:

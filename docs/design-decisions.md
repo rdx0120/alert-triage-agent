@@ -1208,3 +1208,45 @@ for a compromised release to have been noticed: the exact package files are
 fixed by hash, and yanks and advisories for every pin are checked again before
 the evaluation is frozen. Changing a version means editing `eval.in`,
 regenerating, and passing the real-model tests on the host again.
+
+---
+
+## DD-033: A unit with no environment file prints no EnvironmentFiles line
+
+**Context.** The publication contract (DD-029) reads the model server's unit
+with `systemctl show --property=...` and requires the unit to have no
+environment file. The parser required each of the six requested properties
+exactly once. On the evaluation host (Ubuntu 24.04, systemd 255) a unit
+without an environment file printed only five lines, so every server check
+and every identity observation refused with "property EnvironmentFiles
+missing". The test double always printed an empty `EnvironmentFiles=` line,
+so the suite never met the real shape. systemd's source explains the
+behaviour: in `src/systemctl/systemctl-show.c` (tag v255), `EnvironmentFiles`
+has its own printing branch that writes one
+`EnvironmentFiles=<path> (ignore_errors=yes|no)` line per file and nothing
+for an empty list, and it ignores `--all`. On the host, `--all` also printed
+five lines, the D-Bus property was an empty array, and units that do list a
+file printed one such line each.
+
+**Decision.** `parse_show` treats `EnvironmentFiles` as the one property that
+may be absent or repeated. No line means no environment file. Each line is
+kept, and the existing contract check refuses any listed file. An
+`EnvironmentFiles=` line with an empty value, which systemd does not print,
+is refused as unreadable. The other five properties are still required
+exactly once, and an unknown line is still refused. The command is
+unchanged. The test double now prints like systemd 255: no line without a
+file, one line per file.
+
+Rejected: adding `--all` (it does not change this property); reading the
+property over D-Bus (a second command and path escaping in the allow-list,
+for the same answer); treating any missing property as empty (that would
+also accept truncated output for the five that systemd always prints).
+
+**Consequences.** The server check and the identity observation can read a
+correctly configured unit on systemd 255. What the contract accepts is
+unchanged: a unit with an environment file is still refused. The absence of
+the line cannot be told apart from output cut short before it, but the
+command must exit 0 and the other five properties must all be present.
+`evaluation/identity.py` and two instrument test files change, so the
+evaluation instruments are recorded again after this change merges, before
+any label exists.
