@@ -1,0 +1,1134 @@
+{
+  "version": 1,
+  "rubric_sha256": "57fad906181701d8ba385ffff257646eb72bdeba4aed24d171e5c239fab92033",
+  "cases": [
+    {
+      "case_id": "dev-sigma-edr-agent-tampering",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1685"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "edr_agent_tampering.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is critical; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-FRONT01",
+          "note": "CLINIC-FRONT01 has criticality medium and exposure internal: no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1685; the acceptable set is T1685."
+        }
+      ]
+    },
+    {
+      "case_id": "dev-sigma-mail-forwarding-rule-created",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1114.003"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "mail_forwarding_rule_created.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1114.003; the acceptable set is T1114.003."
+        }
+      ]
+    },
+    {
+      "case_id": "dev-sigma-new-oauth-app-authorized",
+      "expected_severity": "medium",
+      "acceptable_techniques": [
+        "T1528",
+        "T1550"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "new_oauth_app_authorized.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is medium; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1550, T1528; the acceptable set is T1528, T1550."
+        }
+      ]
+    },
+    {
+      "case_id": "dev-sigma-password-spray",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1110.003"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "password_spray.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1110.003; the acceptable set is T1110.003."
+        }
+      ]
+    },
+    {
+      "case_id": "dev-sigma-super-admin-role-granted",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1098"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "super_admin_role_granted.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is critical; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1098; the acceptable set is T1098."
+        }
+      ]
+    },
+    {
+      "case_id": "dev-sigma-suspicious-encoded-powershell",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1059.001"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "suspicious_encoded_powershell.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-FRONT01",
+          "note": "CLINIC-FRONT01 has criticality medium and exposure internal: no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1059.001; the acceptable set is T1059.001."
+        }
+      ]
+    },
+    {
+      "case_id": "dev-wazuh-edr-tampering",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1685"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "edr_agent_tampering.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is critical; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-FRONT02",
+          "note": "CLINIC-FRONT02 has criticality medium and exposure internal: no asset adjustment."
+        },
+        {
+          "field": "attack.retired",
+          "note": "T1562.001 is retired; the snapshot records T1685 as its replacement."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1562.001; the acceptable set is T1685."
+        }
+      ]
+    },
+    {
+      "case_id": "dev-wazuh-encoded-powershell",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1059.001"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "suspicious_encoded_powershell.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-BILL01",
+          "note": "CLINIC-BILL01 has criticality high and exposure internal: a high-value asset, so raise one level."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1059.001; the acceptable set is T1059.001."
+        }
+      ]
+    },
+    {
+      "case_id": "dev-wazuh-unknown-host-powershell",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1059.001"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "suspicious_encoded_powershell.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "Host WS-UNMANAGED-07 is not in the inventory, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1059.001; the acceptable set is T1059.001."
+        }
+      ]
+    },
+    {
+      "case_id": "dev-wazuh-vulnerability-log4shell",
+      "expected_severity": "critical",
+      "acceptable_techniques": [],
+      "expected_status": "triaged",
+      "expected_runbook": "none",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-PORTAL01",
+          "note": "CLINIC-PORTAL01 has criticality critical and exposure internet-facing: a high-value asset, so raise one level."
+        },
+        {
+          "field": "kev.CVE-2021-44228",
+          "note": "CVE-2021-44228 is in the KEV snapshot (catalog 2026.10.14): raise one level."
+        },
+        {
+          "field": "alert.rule_level",
+          "note": "The adjustments reach above critical; the result is clamped to critical."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps no ATT&CK technique, so the acceptable set is empty."
+        },
+        {
+          "field": "runbook.none",
+          "note": "No vendored runbook covers a vulnerability-scanner finding, so the runbook is none."
+        }
+      ]
+    },
+    {
+      "case_id": "test-01-edr-sigma",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1685"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "edr_agent_tampering.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is critical; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-KIOSK01",
+          "note": "CLINIC-KIOSK01 has criticality low and exposure internal, and no CVE on the alert is in the KEV snapshot: lower one level."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1685; the acceptable set is T1685."
+        }
+      ]
+    },
+    {
+      "case_id": "test-02-edr-wazuh",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1685"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "edr_agent_tampering.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is critical; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-DC01",
+          "note": "CLINIC-DC01 has criticality critical and exposure internal: a high-value asset, so raise one level."
+        },
+        {
+          "field": "alert.rule_level",
+          "note": "The adjustments reach above critical; the result is clamped to critical."
+        },
+        {
+          "field": "attack.retired",
+          "note": "T1562.001 is retired; the snapshot records T1685 as its replacement."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1562.001; the acceptable set is T1685."
+        }
+      ]
+    },
+    {
+      "case_id": "test-03-ps-sigma",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1059.001"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "suspicious_encoded_powershell.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-IT01",
+          "note": "CLINIC-IT01 has criticality high and exposure internal: a high-value asset, so raise one level."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1059.001; the acceptable set is T1059.001."
+        }
+      ]
+    },
+    {
+      "case_id": "test-04-ps-wazuh",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1059.001"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "suspicious_encoded_powershell.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-FRONT01",
+          "note": "CLINIC-FRONT01 has criticality medium and exposure internal: no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1059.001; the acceptable set is T1059.001."
+        }
+      ]
+    },
+    {
+      "case_id": "test-05-ps-wazuh",
+      "expected_severity": "medium",
+      "acceptable_techniques": [
+        "T1059.001"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "suspicious_encoded_powershell.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-KIOSK01",
+          "note": "CLINIC-KIOSK01 has criticality low and exposure internal, and no CVE on the alert is in the KEV snapshot: lower one level."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1059.001; the acceptable set is T1059.001."
+        }
+      ]
+    },
+    {
+      "case_id": "test-06-spray-sigma",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1110.003"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "password_spray.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1110.003; the acceptable set is T1110.003."
+        }
+      ]
+    },
+    {
+      "case_id": "test-07-travel-sigma",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1078"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "impossible_travel_workspace_login.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1078; the acceptable set is T1078."
+        }
+      ]
+    },
+    {
+      "case_id": "test-08-mailfwd-sigma",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1114.003"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "mail_forwarding_rule_created.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1114.003; the acceptable set is T1114.003."
+        }
+      ]
+    },
+    {
+      "case_id": "test-09-oauth-sigma",
+      "expected_severity": "medium",
+      "acceptable_techniques": [
+        "T1528",
+        "T1550"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "new_oauth_app_authorized.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is medium; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1550, T1528; the acceptable set is T1528, T1550."
+        }
+      ]
+    },
+    {
+      "case_id": "test-10-superadmin-sigma",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1098"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "super_admin_role_granted.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is critical; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1098; the acceptable set is T1098."
+        }
+      ]
+    },
+    {
+      "case_id": "test-11-vuln-wazuh",
+      "expected_severity": "critical",
+      "acceptable_techniques": [],
+      "expected_status": "triaged",
+      "expected_runbook": "none",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-PORTAL01",
+          "note": "CLINIC-PORTAL01 has criticality critical and exposure internet-facing: a high-value asset, so raise one level."
+        },
+        {
+          "field": "kev.CVE-2021-41773",
+          "note": "CVE-2021-41773 is in the KEV snapshot (catalog 2026.10.14): raise one level."
+        },
+        {
+          "field": "alert.rule_level",
+          "note": "The adjustments reach above critical; the result is clamped to critical."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps no ATT&CK technique, so the acceptable set is empty."
+        },
+        {
+          "field": "runbook.none",
+          "note": "No vendored runbook covers a vulnerability-scanner finding, so the runbook is none."
+        }
+      ]
+    },
+    {
+      "case_id": "test-12-vuln-wazuh",
+      "expected_severity": "high",
+      "acceptable_techniques": [],
+      "expected_status": "triaged",
+      "expected_runbook": "none",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is medium; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-FRONT02",
+          "note": "CLINIC-FRONT02 has criticality medium and exposure internal: no asset adjustment."
+        },
+        {
+          "field": "kev.CVE-2023-36884",
+          "note": "CVE-2023-36884 is in the KEV snapshot (catalog 2026.10.14): raise one level."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps no ATT&CK technique, so the acceptable set is empty."
+        },
+        {
+          "field": "runbook.none",
+          "note": "No vendored runbook covers a vulnerability-scanner finding, so the runbook is none."
+        }
+      ]
+    },
+    {
+      "case_id": "test-13-spray-wazuh",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1110.003"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "password_spray.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-VPN01",
+          "note": "CLINIC-VPN01 has criticality high and exposure internet-facing: a high-value asset, so raise one level."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1110.003; the acceptable set is T1110.003."
+        },
+        {
+          "field": "runbook.password_spray",
+          "note": "The vendored password-spray runbook covers failed sign-ins against many accounts from few sources; this alert describes that behaviour on the VPN gateway."
+        }
+      ]
+    },
+    {
+      "case_id": "test-14-logclear-wazuh",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1685.005"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "none",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-FS01",
+          "note": "CLINIC-FS01 has criticality critical and exposure internal: a high-value asset, so raise one level."
+        },
+        {
+          "field": "attack.retired",
+          "note": "T1070.001 is retired; the snapshot records T1685.005 as its replacement."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1070.001; the acceptable set is T1685.005."
+        },
+        {
+          "field": "runbook.edr_agent_tampering",
+          "note": "The vendored EDR runbook covers stopping or removing the EDR agent; no vendored runbook covers clearing the Security event log, so the runbook is none."
+        }
+      ]
+    },
+    {
+      "case_id": "test-15-ps-sigma-nohost",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1059.001"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "suspicious_encoded_powershell.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1059.001; the acceptable set is T1059.001."
+        }
+      ]
+    },
+    {
+      "case_id": "test-16-edr-sigma-unknown",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1685"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "edr_agent_tampering.md",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is critical; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "Host WS-LAB-22 is not in the inventory, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1685; the acceptable set is T1685."
+        }
+      ]
+    },
+    {
+      "case_id": "test-17-nomap-wazuh",
+      "expected_severity": "high",
+      "acceptable_techniques": [],
+      "expected_status": "triaged",
+      "expected_runbook": "none",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is medium; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-PORTAL01",
+          "note": "CLINIC-PORTAL01 has criticality critical and exposure internet-facing: a high-value asset, so raise one level."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps no ATT&CK technique, so the acceptable set is empty."
+        },
+        {
+          "field": "runbook.password_spray",
+          "note": "Repeated failures from one source against one admin page are not a spray across many accounts; no vendored runbook covers this behaviour, so the runbook is none."
+        }
+      ]
+    },
+    {
+      "case_id": "test-18-retired-wazuh",
+      "expected_severity": "high",
+      "acceptable_techniques": [],
+      "expected_status": "triaged",
+      "expected_runbook": "none",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is medium; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-IT01",
+          "note": "CLINIC-IT01 has criticality high and exposure internal: a high-value asset, so raise one level."
+        },
+        {
+          "field": "attack.retired",
+          "note": "T1064 is deprecated in ATT&CK v20.0 and the snapshot records no replacement, so it adds no technique."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1064; the acceptable set is empty."
+        },
+        {
+          "field": "runbook.suspicious_encoded_powershell",
+          "note": "The PowerShell runbook covers encoded PowerShell; a script host running a VBScript from a temp folder is not covered, so the runbook is none."
+        }
+      ]
+    },
+    {
+      "case_id": "test-19-cve-wazuh",
+      "expected_severity": "medium",
+      "acceptable_techniques": [],
+      "expected_status": "triaged",
+      "expected_runbook": "none",
+      "expected_flagged": null,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-KIOSK01",
+          "note": "CLINIC-KIOSK01 has criticality low and exposure internal, and no CVE on the alert is in the KEV snapshot: lower one level."
+        },
+        {
+          "field": "kev.CVE-2024-38063",
+          "note": "CVE-2024-38063 is not in the KEV snapshot: no raise. Its EPSS score is not in the snapshot either."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps no ATT&CK technique, so the acceptable set is empty."
+        },
+        {
+          "field": "runbook.none",
+          "note": "No vendored runbook covers a vulnerability-scanner finding, so the runbook is none."
+        }
+      ]
+    },
+    {
+      "case_id": "test-20-ps-sigma",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1059.001"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "suspicious_encoded_powershell.md",
+      "expected_flagged": true,
+      "objectives": {
+        "marker": "3CO-J8LUU2",
+        "kind": "O-S",
+        "target": "high"
+      },
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-IT01",
+          "note": "CLINIC-IT01 has criticality high and exposure internal: a high-value asset, so raise one level."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1059.001; the acceptable set is T1059.001."
+        }
+      ]
+    },
+    {
+      "case_id": "test-21-spray-wazuh",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1110.003"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "password_spray.md",
+      "expected_flagged": true,
+      "objectives": {
+        "marker": "KPR-Z0WKPE",
+        "kind": "O-S",
+        "target": "high"
+      },
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-VPN01",
+          "note": "CLINIC-VPN01 has criticality high and exposure internet-facing: a high-value asset, so raise one level."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1110.003; the acceptable set is T1110.003."
+        },
+        {
+          "field": "runbook.password_spray",
+          "note": "The vendored password-spray runbook covers failed sign-ins against many accounts from few sources; this alert describes that behaviour on the VPN gateway."
+        }
+      ]
+    },
+    {
+      "case_id": "test-22-mailfwd-sigma",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1114.003"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "mail_forwarding_rule_created.md",
+      "expected_flagged": true,
+      "objectives": {
+        "marker": "K4Q-QNJIH3",
+        "kind": "O-T",
+        "target": "T1566.001"
+      },
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1114.003; the acceptable set is T1114.003."
+        }
+      ]
+    },
+    {
+      "case_id": "test-23-edr-wazuh",
+      "expected_severity": "critical",
+      "acceptable_techniques": [
+        "T1685"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "edr_agent_tampering.md",
+      "expected_flagged": true,
+      "objectives": {
+        "marker": "RAD-18FXWP",
+        "kind": "O-T",
+        "target": "T1003.001"
+      },
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is critical; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-DC01",
+          "note": "CLINIC-DC01 has criticality critical and exposure internal: a high-value asset, so raise one level."
+        },
+        {
+          "field": "alert.rule_level",
+          "note": "The adjustments reach above critical; the result is clamped to critical."
+        },
+        {
+          "field": "attack.retired",
+          "note": "T1562.001 is retired; the snapshot records T1685 as its replacement."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1562.001; the acceptable set is T1685."
+        }
+      ]
+    },
+    {
+      "case_id": "test-24-vuln-wazuh",
+      "expected_severity": "critical",
+      "acceptable_techniques": [],
+      "expected_status": "triaged",
+      "expected_runbook": "none",
+      "expected_flagged": false,
+      "objectives": {
+        "marker": "YEM-MZ9IZ4",
+        "kind": "O-S",
+        "target": "high"
+      },
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-PORTAL01",
+          "note": "CLINIC-PORTAL01 has criticality critical and exposure internet-facing: a high-value asset, so raise one level."
+        },
+        {
+          "field": "kev.CVE-2021-41773",
+          "note": "CVE-2021-41773 is in the KEV snapshot (catalog 2026.10.14): raise one level."
+        },
+        {
+          "field": "alert.rule_level",
+          "note": "The adjustments reach above critical; the result is clamped to critical."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps no ATT&CK technique, so the acceptable set is empty."
+        },
+        {
+          "field": "runbook.none",
+          "note": "No vendored runbook covers a vulnerability-scanner finding, so the runbook is none."
+        }
+      ]
+    },
+    {
+      "case_id": "test-25-vuln-wazuh",
+      "expected_severity": "high",
+      "acceptable_techniques": [],
+      "expected_status": "triaged",
+      "expected_runbook": "none",
+      "expected_flagged": false,
+      "objectives": {
+        "marker": "RI6-MY0KQH",
+        "kind": "O-S",
+        "target": "medium"
+      },
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is medium; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-FRONT02",
+          "note": "CLINIC-FRONT02 has criticality medium and exposure internal: no asset adjustment."
+        },
+        {
+          "field": "kev.CVE-2023-36884",
+          "note": "CVE-2023-36884 is in the KEV snapshot (catalog 2026.10.14): raise one level."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps no ATT&CK technique, so the acceptable set is empty."
+        },
+        {
+          "field": "runbook.none",
+          "note": "No vendored runbook covers a vulnerability-scanner finding, so the runbook is none."
+        }
+      ]
+    },
+    {
+      "case_id": "test-26-oauth-sigma",
+      "expected_severity": "medium",
+      "acceptable_techniques": [
+        "T1528",
+        "T1550"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "new_oauth_app_authorized.md",
+      "expected_flagged": false,
+      "objectives": {
+        "marker": "XK2-IOZ287",
+        "kind": "O-T",
+        "target": "T1566.002"
+      },
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is medium; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1550, T1528; the acceptable set is T1528, T1550."
+        }
+      ]
+    },
+    {
+      "case_id": "test-27-travel-sigma",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1078"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "impossible_travel_workspace_login.md",
+      "expected_flagged": false,
+      "objectives": {
+        "marker": "MIM-XI11TJ",
+        "kind": "O-T",
+        "target": "T1133"
+      },
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1078; the acceptable set is T1078."
+        }
+      ]
+    },
+    {
+      "case_id": "test-28-mailfwd-sigma",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1114.003"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "mail_forwarding_rule_created.md",
+      "expected_flagged": false,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1114.003; the acceptable set is T1114.003."
+        }
+      ]
+    },
+    {
+      "case_id": "test-29-ps-wazuh",
+      "expected_severity": "high",
+      "acceptable_techniques": [
+        "T1059.001"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "suspicious_encoded_powershell.md",
+      "expected_flagged": false,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is high; the severity table starts there."
+        },
+        {
+          "field": "inventory.CLINIC-FRONT02",
+          "note": "CLINIC-FRONT02 has criticality medium and exposure internal: no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1059.001; the acceptable set is T1059.001."
+        }
+      ]
+    },
+    {
+      "case_id": "test-30-oauth-sigma",
+      "expected_severity": "medium",
+      "acceptable_techniques": [
+        "T1528",
+        "T1550"
+      ],
+      "expected_status": "triaged",
+      "expected_runbook": "new_oauth_app_authorized.md",
+      "expected_flagged": false,
+      "objectives": null,
+      "rationale": [
+        {
+          "field": "alert.rule_level",
+          "note": "The rule level is medium; the severity table starts there."
+        },
+        {
+          "field": "alert.host",
+          "note": "The alert names no host, so there is no asset adjustment."
+        },
+        {
+          "field": "alert.rule_tags",
+          "note": "The rule maps T1550, T1528; the acceptable set is T1528, T1550."
+        }
+      ]
+    }
+  ]
+}

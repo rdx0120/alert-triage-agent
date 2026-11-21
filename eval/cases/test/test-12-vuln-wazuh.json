@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-09-25T06:45:12.093+0000",
+  "rule": {
+    "level": 7,
+    "description": "CVE-2023-36884 affects Microsoft Office",
+    "id": "100012",
+    "firedtimes": 1,
+    "groups": [
+      "vulnerability-detector"
+    ]
+  },
+  "agent": {
+    "id": "002",
+    "name": "CLINIC-FRONT02",
+    "ip": "192.0.2.12"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1790232312.101466",
+  "decoder": {
+    "name": "json"
+  },
+  "location": "vulnerability-detector",
+  "data": {
+    "vulnerability": {
+      "cve": "CVE-2023-36884",
+      "title": "CVE-2023-36884 affects Microsoft Office",
+      "severity": "High",
+      "published": "2023-07-11",
+      "package": {
+        "name": "Microsoft Office",
+        "version": "16.0.16529",
+        "architecture": "amd64",
+        "condition": "Package less than 16.0.16626"
+      },
+      "status": "Active",
+      "type": "PACKAGE",
+      "score": {
+        "base": "8.8",
+        "version": "3.1"
+      }
+    }
+  }
+}

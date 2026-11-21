@@ -1,0 +1,23 @@
+{
+  "alert_id": "sigma-eval-0007",
+  "rule": {
+    "id": "8f2a1c3e-4b5d-4e6f-9a1b-2c3d4e5f6a7b",
+    "title": "Google Workspace Impossible Travel Login",
+    "level": "high",
+    "tags": [
+      "attack.initial-access",
+      "attack.t1078"
+    ]
+  },
+  "event": {
+    "event.name": "login_success",
+    "actor.email": "rmorgan@example-clinic.test",
+    "source.ip": "203.0.113.80",
+    "source.geo.country_name": "Portugal",
+    "previous.source.ip": "198.51.100.14",
+    "previous.geo.country_name": "United States",
+    "previous.event.time": "2026-09-20T15:02:00Z",
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36",
+    "event.time": "2026-09-20T16:11:00Z"
+  }
+}

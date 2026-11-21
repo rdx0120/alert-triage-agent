@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-09-26T03:21:48.552+0000",
+  "rule": {
+    "level": 10,
+    "description": "VPN gateway: authentication failures for many accounts from one source",
+    "id": "100015",
+    "mitre": {
+      "id": [
+        "T1110.003"
+      ],
+      "tactic": [
+        "Credential Access"
+      ],
+      "technique": [
+        "Password Spraying"
+      ]
+    },
+    "firedtimes": 1,
+    "groups": [
+      "vpn",
+      "authentication_failures"
+    ]
+  },
+  "agent": {
+    "id": "009",
+    "name": "CLINIC-VPN01",
+    "ip": "192.0.2.40"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1790306508.140233",
+  "decoder": {
+    "name": "vpn-gateway"
+  },
+  "full_log": "2026-09-26T03:21:48Z vpn-auth: login failed user=a.okafor src=203.0.113.61 reason=bad_password accounts_from_src=17",
+  "location": "/var/log/vpn/auth.log",
+  "data": {
+    "srcip": "203.0.113.61",
+    "srcuser": "a.okafor",
+    "reason": "bad_password",
+    "accounts_from_source": "17",
+    "window": "300s"
+  }
+}

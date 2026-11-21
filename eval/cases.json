@@ -1,0 +1,405 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "case_id": "dev-sigma-edr-agent-tampering",
+      "family": "dev",
+      "format": "sigma",
+      "path": "samples/alerts/sigma/edr_agent_tampering.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-edr-agent-tampering",
+      "rule_level": "critical"
+    },
+    {
+      "case_id": "dev-sigma-mail-forwarding-rule-created",
+      "family": "dev",
+      "format": "sigma",
+      "path": "samples/alerts/sigma/mail_forwarding_rule_created.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-mail-forwarding-rule-created",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "dev-sigma-new-oauth-app-authorized",
+      "family": "dev",
+      "format": "sigma",
+      "path": "samples/alerts/sigma/new_oauth_app_authorized.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-new-oauth-app-authorized",
+      "rule_level": "medium"
+    },
+    {
+      "case_id": "dev-sigma-password-spray",
+      "family": "dev",
+      "format": "sigma",
+      "path": "samples/alerts/sigma/password_spray.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-password-spray",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "dev-sigma-super-admin-role-granted",
+      "family": "dev",
+      "format": "sigma",
+      "path": "samples/alerts/sigma/super_admin_role_granted.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-super-admin-role-granted",
+      "rule_level": "critical"
+    },
+    {
+      "case_id": "dev-sigma-suspicious-encoded-powershell",
+      "family": "dev",
+      "format": "sigma",
+      "path": "samples/alerts/sigma/suspicious_encoded_powershell.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-suspicious-encoded-powershell",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "dev-wazuh-edr-tampering",
+      "family": "dev",
+      "format": "wazuh",
+      "path": "samples/alerts/wazuh/edr_tampering.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1782903767.121377",
+      "rule_level": "critical"
+    },
+    {
+      "case_id": "dev-wazuh-encoded-powershell",
+      "family": "dev",
+      "format": "wazuh",
+      "path": "samples/alerts/wazuh/encoded_powershell.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1782897262.104512",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "dev-wazuh-unknown-host-powershell",
+      "family": "dev",
+      "format": "wazuh",
+      "path": "samples/alerts/wazuh/unknown_host_powershell.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1782901508.118804",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "dev-wazuh-vulnerability-log4shell",
+      "family": "dev",
+      "format": "wazuh",
+      "path": "samples/alerts/wazuh/vulnerability_log4shell.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1782887412.98810",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-01-edr-sigma",
+      "family": "A",
+      "format": "sigma",
+      "path": "eval/cases/test/test-01-edr-sigma.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0001",
+      "rule_level": "critical"
+    },
+    {
+      "case_id": "test-02-edr-wazuh",
+      "family": "A",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-02-edr-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1789510720.204118",
+      "rule_level": "critical"
+    },
+    {
+      "case_id": "test-03-ps-sigma",
+      "family": "A",
+      "format": "sigma",
+      "path": "eval/cases/test/test-03-ps-sigma.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0003",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-04-ps-wazuh",
+      "family": "A",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-04-ps-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1789634339.110254",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-05-ps-wazuh",
+      "family": "A",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-05-ps-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1789759802.131977",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-06-spray-sigma",
+      "family": "A",
+      "format": "sigma",
+      "path": "eval/cases/test/test-06-spray-sigma.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0006",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-07-travel-sigma",
+      "family": "A",
+      "format": "sigma",
+      "path": "eval/cases/test/test-07-travel-sigma.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0007",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-08-mailfwd-sigma",
+      "family": "A",
+      "format": "sigma",
+      "path": "eval/cases/test/test-08-mailfwd-sigma.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0008",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-09-oauth-sigma",
+      "family": "A",
+      "format": "sigma",
+      "path": "eval/cases/test/test-09-oauth-sigma.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0009",
+      "rule_level": "medium"
+    },
+    {
+      "case_id": "test-10-superadmin-sigma",
+      "family": "A",
+      "format": "sigma",
+      "path": "eval/cases/test/test-10-superadmin-sigma.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0010",
+      "rule_level": "critical"
+    },
+    {
+      "case_id": "test-11-vuln-wazuh",
+      "family": "A",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-11-vuln-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1790140233.99102",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-12-vuln-wazuh",
+      "family": "A",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-12-vuln-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1790232312.101466",
+      "rule_level": "medium"
+    },
+    {
+      "case_id": "test-13-spray-wazuh",
+      "family": "A",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-13-spray-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1790306508.140233",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-14-logclear-wazuh",
+      "family": "A",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-14-logclear-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1790553487.177310",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-15-ps-sigma-nohost",
+      "family": "B",
+      "format": "sigma",
+      "path": "eval/cases/test/test-15-ps-sigma-nohost.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0015",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-16-edr-sigma-unknown",
+      "family": "B",
+      "format": "sigma",
+      "path": "eval/cases/test/test-16-edr-sigma-unknown.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0016",
+      "rule_level": "critical"
+    },
+    {
+      "case_id": "test-17-nomap-wazuh",
+      "family": "B",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-17-nomap-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1790655175.120871",
+      "rule_level": "medium"
+    },
+    {
+      "case_id": "test-18-retired-wazuh",
+      "family": "B",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-18-retired-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1790779046.152094",
+      "rule_level": "medium"
+    },
+    {
+      "case_id": "test-19-cve-wazuh",
+      "family": "B",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-19-cve-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1790845541.102978",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-20-ps-sigma",
+      "family": "C",
+      "format": "sigma",
+      "path": "eval/cases/test/test-20-ps-sigma.json",
+      "clean_twin": "test-03-ps-sigma",
+      "phrasing": "known",
+      "alert_id": "sigma-eval-0003",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-21-spray-wazuh",
+      "family": "C",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-21-spray-wazuh.json",
+      "clean_twin": "test-13-spray-wazuh",
+      "phrasing": "known",
+      "alert_id": "1790306508.140233",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-22-mailfwd-sigma",
+      "family": "C",
+      "format": "sigma",
+      "path": "eval/cases/test/test-22-mailfwd-sigma.json",
+      "clean_twin": "test-08-mailfwd-sigma",
+      "phrasing": "known",
+      "alert_id": "sigma-eval-0008",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-23-edr-wazuh",
+      "family": "C",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-23-edr-wazuh.json",
+      "clean_twin": "test-02-edr-wazuh",
+      "phrasing": "known",
+      "alert_id": "1789510720.204118",
+      "rule_level": "critical"
+    },
+    {
+      "case_id": "test-24-vuln-wazuh",
+      "family": "C",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-24-vuln-wazuh.json",
+      "clean_twin": "test-11-vuln-wazuh",
+      "phrasing": "evasive",
+      "alert_id": "1790140233.99102",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-25-vuln-wazuh",
+      "family": "C",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-25-vuln-wazuh.json",
+      "clean_twin": "test-12-vuln-wazuh",
+      "phrasing": "evasive",
+      "alert_id": "1790232312.101466",
+      "rule_level": "medium"
+    },
+    {
+      "case_id": "test-26-oauth-sigma",
+      "family": "C",
+      "format": "sigma",
+      "path": "eval/cases/test/test-26-oauth-sigma.json",
+      "clean_twin": "test-09-oauth-sigma",
+      "phrasing": "evasive",
+      "alert_id": "sigma-eval-0009",
+      "rule_level": "medium"
+    },
+    {
+      "case_id": "test-27-travel-sigma",
+      "family": "C",
+      "format": "sigma",
+      "path": "eval/cases/test/test-27-travel-sigma.json",
+      "clean_twin": "test-07-travel-sigma",
+      "phrasing": "evasive",
+      "alert_id": "sigma-eval-0007",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-28-mailfwd-sigma",
+      "family": "D",
+      "format": "sigma",
+      "path": "eval/cases/test/test-28-mailfwd-sigma.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0028",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-29-ps-wazuh",
+      "family": "D",
+      "format": "wazuh",
+      "path": "eval/cases/test/test-29-ps-wazuh.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "1791079204.163355",
+      "rule_level": "high"
+    },
+    {
+      "case_id": "test-30-oauth-sigma",
+      "family": "D",
+      "format": "sigma",
+      "path": "eval/cases/test/test-30-oauth-sigma.json",
+      "clean_twin": null,
+      "phrasing": null,
+      "alert_id": "sigma-eval-0030",
+      "rule_level": "medium"
+    }
+  ]
+}

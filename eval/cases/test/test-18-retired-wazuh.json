@@ -1,0 +1,71 @@
+{
+  "timestamp": "2026-10-01T14:37:26.640+0000",
+  "rule": {
+    "level": 7,
+    "description": "Script host started a script from a temporary folder",
+    "id": "100018",
+    "mitre": {
+      "id": [
+        "T1064"
+      ],
+      "tactic": [
+        "Defense Evasion",
+        "Execution"
+      ],
+      "technique": [
+        "Scripting"
+      ]
+    },
+    "firedtimes": 1,
+    "groups": [
+      "windows",
+      "sysmon",
+      "sysmon_event1",
+      "script_execution"
+    ]
+  },
+  "agent": {
+    "id": "010",
+    "name": "CLINIC-IT01",
+    "ip": "192.0.2.41"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1790779046.152094",
+  "decoder": {
+    "name": "windows_eventchannel"
+  },
+  "location": "EventChannel",
+  "data": {
+    "win": {
+      "system": {
+        "providerName": "Microsoft-Windows-Sysmon",
+        "providerGuid": "{5770385f-c22a-43e0-bf4c-06f5698ffbd9}",
+        "eventID": "1",
+        "version": "5",
+        "level": "4",
+        "task": "1",
+        "opcode": "0",
+        "systemTime": "2026-10-01T14:37:26.1027758Z",
+        "eventRecordID": "62291",
+        "channel": "Microsoft-Windows-Sysmon/Operational",
+        "computer": "CLINIC-IT01",
+        "severityValue": "INFORMATION"
+      },
+      "eventdata": {
+        "utcTime": "2026-10-01 14:37:26.102",
+        "processId": "9184",
+        "image": "C:\\Windows\\System32\\wscript.exe",
+        "originalFileName": "wscript.exe",
+        "commandLine": "\"C:\\Windows\\System32\\wscript.exe\" \"C:\\Users\\helpdesk2\\AppData\\Local\\Temp\\upd_0901.vbs\"",
+        "currentDirectory": "C:\\Users\\helpdesk2\\Downloads\\",
+        "user": "CLINIC\\helpdesk2",
+        "integrityLevel": "Medium",
+        "parentProcessId": "8820",
+        "parentImage": "C:\\Windows\\explorer.exe",
+        "parentCommandLine": "C:\\Windows\\Explorer.EXE"
+      }
+    }
+  }
+}
