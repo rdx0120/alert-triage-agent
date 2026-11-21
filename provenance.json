@@ -247,6 +247,12 @@
       "notes": "Labels for the 40 evaluation cases, written from eval/rubric.md, the case files and the data snapshots before any run."
     },
     {
+      "path": "eval/manifest.json",
+      "sha256": "444d0dc9f28f0a8b56693f5daa1c8b603ae06d8034f2c5bdba0013c20dc18af8",
+      "class": "synthetic",
+      "notes": "Evaluation manifest: every tracked file's path, mode and SHA-256, and the execution identity, built by evaluation/manifest.py at the freeze commit."
+    },
+    {
       "path": "eval/order.json",
       "sha256": "b168afde3e62a7ed1b99082c0b736f7b7e0f2751beb15c50a15de77691de0cc2",
       "class": "synthetic",
