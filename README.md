@@ -198,7 +198,9 @@ python -m pip check
 ```
 
 `--isolated` ignores pip's configuration files and `PIP_*` variables, so no
-other index can take part. On other platforms, use the instructions above;
+other index can take part. The evaluation clone has no git remote, so
+`pip freeze` lists the project as `-e <clone>` instead of naming a commit;
+the commit evaluated is recorded with each pass (DD-034). On other platforms, use the instructions above;
 they are not pinned. To change a version, edit `requirements/eval.in`,
 regenerate `requirements/eval.lock` with the command in its header, take a
 changed torch or pip hash from its index's published SHA-256, and rerun

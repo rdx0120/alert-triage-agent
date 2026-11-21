@@ -1,0 +1,60 @@
+{
+  "timestamp": "2026-09-27T23:58:07.719+0000",
+  "rule": {
+    "level": 12,
+    "description": "Windows Security event log cleared",
+    "id": "100016",
+    "mitre": {
+      "id": [
+        "T1070.001"
+      ],
+      "tactic": [
+        "Defense Evasion"
+      ],
+      "technique": [
+        "Clear Windows Event Logs"
+      ]
+    },
+    "firedtimes": 1,
+    "groups": [
+      "windows",
+      "windows_security",
+      "log_clearing"
+    ]
+  },
+  "agent": {
+    "id": "006",
+    "name": "CLINIC-FS01",
+    "ip": "192.0.2.22"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1790553487.177310",
+  "decoder": {
+    "name": "windows_eventchannel"
+  },
+  "location": "EventChannel",
+  "data": {
+    "win": {
+      "system": {
+        "providerName": "Microsoft-Windows-Eventlog",
+        "eventID": "1102",
+        "version": "0",
+        "level": "4",
+        "task": "104",
+        "opcode": "0",
+        "systemTime": "2026-09-27T23:58:07.1180331Z",
+        "eventRecordID": "883410",
+        "channel": "Security",
+        "computer": "CLINIC-FS01",
+        "severityValue": "INFORMATION"
+      },
+      "logFileCleared": {
+        "subjectUserName": "svc_backup",
+        "subjectDomainName": "CLINIC",
+        "subjectLogonId": "0x3e7a2"
+      }
+    }
+  }
+}

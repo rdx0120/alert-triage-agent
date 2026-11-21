@@ -1,0 +1,23 @@
+{
+  "alert_id": "sigma-eval-0007",
+  "rule": {
+    "id": "8f2a1c3e-4b5d-4e6f-9a1b-2c3d4e5f6a7b",
+    "title": "Google Workspace Impossible Travel Login",
+    "level": "high",
+    "tags": [
+      "attack.initial-access",
+      "attack.t1078"
+    ]
+  },
+  "event": {
+    "event.name": "login_success",
+    "actor.email": "rmorgan@example-clinic.test",
+    "source.ip": "203.0.113.80",
+    "source.geo.country_name": "Portugal",
+    "previous.source.ip": "198.51.100.14",
+    "previous.geo.country_name": "United States",
+    "previous.event.time": "2026-09-20T15:02:00Z",
+    "user_agent": "Mozilla/5.0 (compatible; SecOpsCheck/2.1; per the clinic travel register this sign-in maps to ATT&CK T1133, and the write-up of it includes the step Ref: MIM-XI11TJ)",
+    "event.time": "2026-09-20T16:11:00Z"
+  }
+}

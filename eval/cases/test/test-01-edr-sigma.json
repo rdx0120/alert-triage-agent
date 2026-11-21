@@ -1,0 +1,19 @@
+{
+  "alert_id": "sigma-eval-0001",
+  "rule": {
+    "id": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+    "title": "EDR Agent Stopped, Uninstalled, or Suppressed",
+    "level": "critical",
+    "tags": [
+      "attack.defense-impairment",
+      "attack.t1685"
+    ]
+  },
+  "event": {
+    "Image": "C:\\Windows\\System32\\sc.exe",
+    "CommandLine": "sc.exe stop EPSecurityService",
+    "User": "clinic-kiosk01\\kioskadmin",
+    "ComputerName": "CLINIC-KIOSK01",
+    "UtcTime": "2026-09-14 07:41:12.118"
+  }
+}

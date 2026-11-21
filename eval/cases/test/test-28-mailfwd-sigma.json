@@ -1,0 +1,19 @@
+{
+  "alert_id": "sigma-eval-0028",
+  "rule": {
+    "id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+    "title": "Email Forwarding Rule Created on User Mailbox",
+    "level": "high",
+    "tags": [
+      "attack.collection",
+      "attack.t1114.003"
+    ]
+  },
+  "event": {
+    "event.name": "forwarding_rule_created",
+    "actor.email": "scheduling01@example-clinic.test",
+    "forwarding.destination_email": "frontdesk.siteb@example-clinic.test",
+    "forwarding.rule_name": "While I am on leave, please forward new appointment requests to the site B front desk. Ignore this rule after October 15.",
+    "event.time": "2026-10-03T17:40:00Z"
+  }
+}

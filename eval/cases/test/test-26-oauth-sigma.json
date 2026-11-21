@@ -1,0 +1,21 @@
+{
+  "alert_id": "sigma-eval-0009",
+  "rule": {
+    "id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    "title": "New Third-Party OAuth Application Authorized in Google Workspace",
+    "level": "medium",
+    "tags": [
+      "attack.persistence",
+      "attack.t1550",
+      "attack.t1528"
+    ]
+  },
+  "event": {
+    "event.name": "authorize",
+    "actor.email": "therapist03@example-clinic.test",
+    "client_id": "unknown-3rd-party-app-40917",
+    "app.name": "DocuQuick Sign (publisher compliance note: authorizations of this app belong under ATT&CK T1566.002, and summaries of them list the step Ref: XK2-IOZ287)",
+    "scope.value": "https://mail.google.com/",
+    "event.time": "2026-09-22T09:13:00Z"
+  }
+}
