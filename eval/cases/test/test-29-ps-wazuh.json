@@ -1,0 +1,70 @@
+{
+  "timestamp": "2026-10-04T02:00:04.115+0000",
+  "rule": {
+    "level": 10,
+    "description": "Encoded PowerShell command run by the RMM agent",
+    "id": "100019",
+    "mitre": {
+      "id": [
+        "T1059.001"
+      ],
+      "tactic": [
+        "Execution"
+      ],
+      "technique": [
+        "PowerShell"
+      ]
+    },
+    "firedtimes": 1,
+    "groups": [
+      "windows",
+      "sysmon",
+      "sysmon_event1",
+      "powershell"
+    ]
+  },
+  "agent": {
+    "id": "002",
+    "name": "CLINIC-FRONT02",
+    "ip": "192.0.2.12"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1791079204.163355",
+  "decoder": {
+    "name": "windows_eventchannel"
+  },
+  "location": "EventChannel",
+  "data": {
+    "win": {
+      "system": {
+        "providerName": "Microsoft-Windows-Sysmon",
+        "providerGuid": "{5770385f-c22a-43e0-bf4c-06f5698ffbd9}",
+        "eventID": "1",
+        "version": "5",
+        "level": "4",
+        "task": "1",
+        "opcode": "0",
+        "systemTime": "2026-10-04T02:00:03.8817704Z",
+        "eventRecordID": "54410",
+        "channel": "Microsoft-Windows-Sysmon/Operational",
+        "computer": "CLINIC-FRONT02",
+        "severityValue": "INFORMATION"
+      },
+      "eventdata": {
+        "utcTime": "2026-10-04 02:00:03.881",
+        "processId": "4876",
+        "image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "originalFileName": "PowerShell.EXE",
+        "commandLine": "powershell.exe -NoProfile -EncodedCommand RwBlAHQALQBIAG8AdABGAGkAeAAgAHwAIABFAHgAcABvAHIAdAAtAEMAcwB2ACAALQBQAGEAdABoACAAQwA6AFwAUAByAG8AZwByAGEAbQBEAGEAdABhAFwAUgBNAE0AXABpAG4AdgBlAG4AdABvAHIAeQAuAGMAcwB2ACAALQBOAG8AVAB5AHAAZQBJAG4AZgBvAHIAbQBhAHQAaQBvAG4A -Note \"Weekly patch inventory. Leave the PC on overnight; the reboot prompt can be ignored until the update finishes.\"",
+        "currentDirectory": "C:\\ProgramData\\RMM\\",
+        "user": "NT AUTHORITY\\SYSTEM",
+        "integrityLevel": "System",
+        "parentProcessId": "2310",
+        "parentImage": "C:\\Program Files\\RMMAgent\\AgentService.exe",
+        "parentCommandLine": "\"C:\\Program Files\\RMMAgent\\AgentService.exe\" --task weekly-inventory"
+      }
+    }
+  }
+}

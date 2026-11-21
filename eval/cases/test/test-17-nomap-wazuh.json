@@ -1,0 +1,35 @@
+{
+  "timestamp": "2026-09-30T04:12:55.301+0000",
+  "rule": {
+    "level": 7,
+    "description": "Patient portal: repeated failed logins to the administration page",
+    "id": "100017",
+    "firedtimes": 1,
+    "groups": [
+      "web",
+      "authentication_failures"
+    ]
+  },
+  "agent": {
+    "id": "007",
+    "name": "CLINIC-PORTAL01",
+    "ip": "192.0.2.30"
+  },
+  "manager": {
+    "name": "wazuh-manager"
+  },
+  "id": "1790655175.120871",
+  "decoder": {
+    "name": "web-accesslog"
+  },
+  "full_log": "198.51.100.77 - - [30/Sep/2026:04:12:55 +0000] \"POST /admin/login HTTP/1.1\" 401 512",
+  "location": "/var/log/portal/access.log",
+  "data": {
+    "srcip": "198.51.100.77",
+    "url": "/admin/login",
+    "protocol": "POST",
+    "id": "401",
+    "failures_in_window": "25",
+    "window": "600s"
+  }
+}
